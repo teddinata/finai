@@ -30,7 +30,7 @@ class WebhookController extends Controller
 
         // Verify webhook token
         $callbackToken = $request->header('x-callback-token');
-        
+
         if (!$this->xenditService->verifyWebhookToken($callbackToken)) {
             Log::warning('Invalid Xendit webhook token', [
                 'token_received' => $callbackToken,
@@ -40,31 +40,38 @@ class WebhookController extends Controller
 
         try {
             $data = $request->all();
-            
+
             // Determine webhook type
             if (isset($data['external_id']) && str_starts_with($data['external_id'], 'PAYMENT-')) {
                 // Invoice webhook
                 return $this->handleInvoiceWebhook($data);
-            } elseif (isset($data['external_id']) && str_starts_with($data['external_id'], 'VA-')) {
+            }
+            elseif (isset($data['external_id']) && str_starts_with($data['external_id'], 'VA-')) {
                 // Virtual Account webhook
                 return $this->handleVirtualAccountWebhook($data);
-            } elseif (isset($data['reference_id']) && str_starts_with($data['reference_id'], 'EWALLET-')) {
+            }
+            elseif (isset($data['reference_id']) && str_starts_with($data['reference_id'], 'EWALLET-')) {
                 // E-Wallet webhook
                 return $this->handleEWalletWebhook($data);
-            } elseif (isset($data['reference_id']) && str_starts_with($data['reference_id'], 'QRIS-')) {
+            }
+            elseif (isset($data['reference_id']) && str_starts_with($data['reference_id'], 'QRIS-')) {
                 // QRIS webhook
                 return $this->handleQRISWebhook($data);
             }
 
             Log::warning('Unknown webhook type', ['data' => $data]);
-            return response()->json(['error' => 'Unknown webhook type'], 400);
+            $id = $data['external_id'] ?? $data['reference_id'] ?? 'unknown';
+            return response()->json([
+                'error' => "Unknown webhook type. ID: {$id}. Expected prefix: PAYMENT-, VA-, EWALLET-, or QRIS-"
+            ], 400);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             Log::error('Webhook processing error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
+
             return response()->json(['error' => 'Internal server error'], 500);
         }
     }
@@ -76,9 +83,9 @@ class WebhookController extends Controller
     {
         $externalId = $data['external_id']; // PAYMENT-123
         $paymentId = str_replace('PAYMENT-', '', $externalId);
-        
+
         $payment = Payment::find($paymentId);
-        
+
         if (!$payment) {
             Log::error('Payment not found for invoice webhook', [
                 'external_id' => $externalId,
@@ -134,9 +141,9 @@ class WebhookController extends Controller
     {
         $externalId = $data['external_id']; // VA-123
         $paymentId = str_replace('VA-', '', $externalId);
-        
+
         $payment = Payment::find($paymentId);
-        
+
         if (!$payment) {
             Log::error('Payment not found for VA webhook', [
                 'external_id' => $externalId,
@@ -174,9 +181,9 @@ class WebhookController extends Controller
     {
         $referenceId = $data['reference_id']; // EWALLET-123
         $paymentId = str_replace('EWALLET-', '', $referenceId);
-        
+
         $payment = Payment::find($paymentId);
-        
+
         if (!$payment) {
             Log::error('Payment not found for E-Wallet webhook', [
                 'reference_id' => $referenceId,
@@ -229,9 +236,9 @@ class WebhookController extends Controller
     {
         $referenceId = $data['reference_id']; // QRIS-123
         $paymentId = str_replace('QRIS-', '', $referenceId);
-        
+
         $payment = Payment::find($paymentId);
-        
+
         if (!$payment) {
             Log::error('Payment not found for QRIS webhook', [
                 'reference_id' => $referenceId,
