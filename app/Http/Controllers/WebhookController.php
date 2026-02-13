@@ -41,6 +41,11 @@ class WebhookController extends Controller
         try {
             $data = $request->all();
 
+            // Handle V2 Webhook (Event Based) where data is inside 'data' key
+            if (isset($data['event']) && isset($data['data']) && is_array($data['data'])) {
+                $data = $data['data'];
+            }
+
             // Determine webhook type
             if (isset($data['external_id']) && str_starts_with($data['external_id'], 'PAYMENT-')) {
                 // Invoice webhook
