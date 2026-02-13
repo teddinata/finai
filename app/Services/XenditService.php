@@ -12,7 +12,7 @@ class XenditService
 
     public function __construct()
     {
-        // Lazy load initialization
+    // Lazy load initialization
     }
 
     protected function initXendit()
@@ -25,7 +25,7 @@ class XenditService
             throw new \Exception('Xendit SDK not installed. Run: composer require xendit/xendit-php');
         }
 
-        \Xendit\Xendit::setApiKey(config('services.xendit.secret_key'));
+        \Xendit\Xendit::setApiKey(config('xendit.secret_key'));
         $this->initialized = true;
     }
 
@@ -35,7 +35,7 @@ class XenditService
     public function createInvoice(Payment $payment, array $customerData)
     {
         $this->initXendit();
-        
+
         $household = $payment->household;
         $plan = $payment->subscription->plan;
 
@@ -53,8 +53,8 @@ class XenditService
                 'invoice_reminder' => ['email'],
                 'invoice_paid' => ['email'],
             ],
-            'success_redirect_url' => config('services.xendit.success_redirect_url'),
-            'failure_redirect_url' => config('services.xendit.failure_redirect_url'),
+            'success_redirect_url' => config('xendit.success_redirect_url'),
+            'failure_redirect_url' => config('xendit.failure_redirect_url'),
             'currency' => 'IDR',
             'items' => [
                 [
@@ -101,7 +101,7 @@ class XenditService
     public function createVirtualAccount(Payment $payment, string $bankCode = 'BNI')
     {
         $this->initXendit();
-        
+
         $validBanks = ['BNI', 'BRI', 'MANDIRI', 'PERMATA', 'BCA'];
         if (!in_array($bankCode, $validBanks)) {
             throw new \Exception("Invalid bank code. Must be one of: " . implode(', ', $validBanks));
@@ -144,7 +144,7 @@ class XenditService
     public function createEWalletCharge(Payment $payment, string $ewalletType = 'OVO')
     {
         $this->initXendit();
-        
+
         $validEwallets = ['OVO', 'DANA', 'LINKAJA', 'SHOPEEPAY'];
         if (!in_array($ewalletType, $validEwallets)) {
             throw new \Exception("Invalid e-wallet type. Must be one of: " . implode(', ', $validEwallets));
@@ -157,8 +157,8 @@ class XenditService
             'checkout_method' => 'ONE_TIME_PAYMENT',
             'channel_code' => $ewalletType,
             'channel_properties' => [
-                'success_redirect_url' => config('services.xendit.success_redirect_url'),
-                'failure_redirect_url' => config('services.xendit.failure_redirect_url'),
+                'success_redirect_url' => config('xendit.success_redirect_url'),
+                'failure_redirect_url' => config('xendit.failure_redirect_url'),
             ],
         ];
 
@@ -192,13 +192,13 @@ class XenditService
     public function createQRIS(Payment $payment)
     {
         $this->initXendit();
-        
+
         $params = [
             'reference_id' => 'QRIS-' . $payment->id,
             'type' => 'DYNAMIC',
             'currency' => 'IDR',
             'amount' => $payment->total,
-            'callback_url' => config('services.xendit.webhook_url'),
+            'callback_url' => config('xendit.webhook_url'),
         ];
 
         $qris = \Xendit\QRCode::create($params);
@@ -242,8 +242,8 @@ class XenditService
      */
     public function verifyWebhookToken(string $token): bool
     {
-        $expectedToken = config('services.xendit.webhook_token');
-        
+        $expectedToken = config('xendit.webhook_token');
+
         if (empty($expectedToken)) {
             \Log::warning('Xendit webhook token not configured');
             return false;
@@ -273,14 +273,14 @@ class XenditService
         // Activate subscription
         if ($payment->subscription) {
             $subscription = $payment->subscription;
-            
+
             // Calculate expiry based on plan type
-            $expiresAt = match($subscription->plan->type) {
-                'monthly' => now()->addMonth(),
-                'yearly' => now()->addYear(),
-                'lifetime' => null,
-                default => now()->addMonth(),
-            };
+            $expiresAt = match ($subscription->plan->type) {
+                    'monthly' => now()->addMonth(),
+                    'yearly' => now()->addYear(),
+                    'lifetime' => null,
+                    default => now()->addMonth(),
+                };
 
             $subscription->update([
                 'status' => 'active',
@@ -360,7 +360,8 @@ class XenditService
             ]);
 
             \Log::info('Invoice created', ['invoice_id' => $invoice->id]);
-        } else {
+        }
+        else {
             $invoice->update([
                 'status' => 'paid',
                 'paid_at' => $payment->paid_at,
