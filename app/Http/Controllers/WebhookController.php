@@ -27,22 +27,22 @@ class WebhookController extends Controller
     public function xendit(Request $request)
     {
         // Log incoming webhook for debugging
-        Log::info('Xendit Webhook Received', [
+        Log::info('=== XENDIT WEBHOOK RECEIVED ===', [
             'headers' => $request->headers->all(),
             'body' => $request->all(),
         ]);
 
-        // Verify webhook token
+        // Verify webhook token - gunakan cara proven works dari gascpns
         $callbackToken = $request->header('x-callback-token');
+        $expectedToken = env('XENDIT_WEBHOOK_TOKEN');
 
-        // Debug: log token comparison (remove after fixing)
-        Log::info('Webhook token debug', [
+        Log::info('Webhook token verification', [
             'received' => $callbackToken,
-            'expected' => config('xendit.webhook_token'),
-            'match' => $callbackToken === config('xendit.webhook_token'),
+            'expected' => $expectedToken,
+            'match' => $callbackToken === $expectedToken,
         ]);
 
-        if (!$this->xenditService->verifyWebhookToken($callbackToken)) {
+        if ($callbackToken !== $expectedToken) {
             Log::warning('Invalid Xendit webhook token', [
                 'token_received' => $callbackToken,
             ]);
@@ -53,16 +53,15 @@ class WebhookController extends Controller
             $payload = $request->all();
 
             // Detect webhook version and route accordingly
-            // V2: has 'event' and 'data' keys
             if (isset($payload['event']) && isset($payload['data'])) {
+                Log::info('Processing V2 webhook', ['event' => $payload['event']]);
                 return $this->handleV2Webhook($payload);
             }
 
-            // V1: flat payload — detect by external_id prefix
+            Log::info('Processing V1 webhook');
             return $this->handleV1Webhook($payload);
 
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             Log::error('Webhook processing error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -86,31 +85,31 @@ class WebhookController extends Controller
         $event = $payload['event'];
         $data = $payload['data'];
 
-        Log::info('Processing V2 webhook', [
+        Log::info('V2 Webhook Event', [
             'event' => $event,
             'data_id' => $data['id'] ?? 'unknown',
         ]);
 
         // Route by event type
         return match (true) {
-                // Invoice events
-                str_starts_with($event, 'invoice.') => $this->handleInvoiceWebhook($data),
+            // Invoice events
+            str_starts_with($event, 'invoice.') => $this->handleInvoiceWebhook($data),
 
-                // E-Wallet events
-                str_starts_with($event, 'ewallet.') => $this->handleEWalletWebhook($data),
+            // E-Wallet events
+            str_starts_with($event, 'ewallet.') => $this->handleEWalletWebhook($data),
 
-                // QRIS events
-                str_starts_with($event, 'qr.') => $this->handleQRISWebhook($data),
+            // QRIS events
+            str_starts_with($event, 'qr.') => $this->handleQRISWebhook($data),
 
-                // Virtual Account events
-                str_starts_with($event, 'fva.') ||
-                str_starts_with($event, 'virtual_account.') => $this->handleVirtualAccountWebhook($data),
+            // Virtual Account events
+            str_starts_with($event, 'fva.') ||
+            str_starts_with($event, 'virtual_account.') => $this->handleVirtualAccountWebhook($data),
 
-                // Payment Request events (Xendit V2 unified)
-                str_starts_with($event, 'payment.') => $this->handlePaymentRequestWebhook($data),
+            // Payment Request events (Xendit V2 unified)
+            str_starts_with($event, 'payment.') => $this->handlePaymentRequestWebhook($data),
 
-                default => $this->handleUnknownWebhook($event, $data),
-            };
+            default => $this->handleUnknownWebhook($event, $data),
+        };
     }
 
     // =========================================================================
@@ -125,61 +124,126 @@ class WebhookController extends Controller
         $externalId = $data['external_id'] ?? null;
         $referenceId = $data['reference_id'] ?? null;
 
-        Log::info('Processing V1 webhook', [
+        Log::info('V1 Webhook Data', [
             'external_id' => $externalId,
             'reference_id' => $referenceId,
         ]);
 
         // Route by prefix
         return match (true) {
-                // Our custom prefixes from PaymentController
-                $externalId && str_starts_with($externalId, 'PAYMENT-') => $this->handleInvoiceWebhook($data),
-                $externalId && str_starts_with($externalId, 'VA-') => $this->handleVirtualAccountWebhook($data),
-                $referenceId && str_starts_with($referenceId, 'EWALLET-') => $this->handleEWalletWebhook($data),
-                $referenceId && str_starts_with($referenceId, 'QRIS-') => $this->handleQRISWebhook($data),
+            // Our custom prefixes from PaymentController
+            $externalId && str_starts_with($externalId, 'PAYMENT-') => $this->handleInvoiceWebhook($data),
+            $externalId && str_starts_with($externalId, 'VA-') => $this->handleVirtualAccountWebhook($data),
+            $referenceId && str_starts_with($referenceId, 'EWALLET-') => $this->handleEWalletWebhook($data),
+            $referenceId && str_starts_with($referenceId, 'QRIS-') => $this->handleQRISWebhook($data),
 
-                // Fallback: detect by payload structure (for Xendit test webhooks)
-                isset($data['callback_virtual_account_id']) => $this->handleVirtualAccountWebhook($data),
-                isset($data['payment_channel']) && isset($data['paid_amount']) => $this->handleInvoiceWebhook($data),
+            // Fallback: detect by payload structure (for Xendit test webhooks)
+            isset($data['callback_virtual_account_id']) => $this->handleVirtualAccountWebhook($data),
+            isset($data['payment_channel']) && isset($data['paid_amount']) => $this->handleInvoiceWebhook($data),
 
-                default => $this->handleUnknownWebhook('v1_unknown', $data),
-            };
+            default => $this->handleUnknownWebhook('v1_unknown', $data),
+        };
     }
 
     // =========================================================================
-    //  PAYMENT HANDLERS
+    //  PAYMENT LOOKUP - UPDATED WITH payment_token
     // =========================================================================
 
     /**
-     * Find payment by external_id or reference_id with known prefixes
+     * Find payment by payment_token (reference_id/external_id) or fallback to other methods
+     * 
+     * ✅ UPDATED: Prioritas lookup menggunakan payment_token yang sudah disimpan
      */
     protected function findPayment(array $data): ?Payment
     {
-        $externalId = $data['external_id'] ?? null;
+        // Priority 1: Cek by reference_id (Payment Request API) via payment_token
         $referenceId = $data['reference_id'] ?? null;
+        if ($referenceId) {
+            $payment = Payment::where('payment_token', $referenceId)->first();
+            if ($payment) {
+                Log::info('Payment found by reference_id (payment_token)', [
+                    'payment_id' => $payment->id,
+                    'reference_id' => $referenceId,
+                ]);
+                return $payment;
+            }
+        }
 
-        // Try our custom prefixes first
+        // Priority 2: Cek by external_id (Invoice API) via payment_token
+        $externalId = $data['external_id'] ?? null;
+        if ($externalId) {
+            $payment = Payment::where('payment_token', $externalId)->first();
+            if ($payment) {
+                Log::info('Payment found by external_id (payment_token)', [
+                    'payment_id' => $payment->id,
+                    'external_id' => $externalId,
+                ]);
+                return $payment;
+            }
+        }
+
+        // Priority 3: Cek by payment_gateway_id (Xendit ID)
+        $xenditId = $data['id'] ?? null;
+        if ($xenditId) {
+            $payment = Payment::where('payment_gateway_id', $xenditId)->first();
+            if ($payment) {
+                Log::info('Payment found by payment_gateway_id', [
+                    'payment_id' => $payment->id,
+                    'gateway_id' => $xenditId,
+                ]);
+                return $payment;
+            }
+        }
+
+        // Priority 4: Fallback - coba extract ID dari prefix (backward compatibility)
         $prefixes = ['PAYMENT-', 'VA-', 'EWALLET-', 'QRIS-'];
-
         foreach ($prefixes as $prefix) {
             if ($externalId && str_starts_with($externalId, $prefix)) {
                 $paymentId = str_replace($prefix, '', $externalId);
-                return Payment::find($paymentId);
+                if (is_numeric($paymentId)) {
+                    $payment = Payment::find($paymentId);
+                    if ($payment) {
+                        Log::info('Payment found by ID extraction from external_id', [
+                            'payment_id' => $payment->id,
+                            'extracted_from' => $externalId,
+                        ]);
+                        return $payment;
+                    }
+                }
             }
             if ($referenceId && str_starts_with($referenceId, $prefix)) {
                 $paymentId = str_replace($prefix, '', $referenceId);
-                return Payment::find($paymentId);
+                if (is_numeric($paymentId)) {
+                    $payment = Payment::find($paymentId);
+                    if ($payment) {
+                        Log::info('Payment found by ID extraction from reference_id', [
+                            'payment_id' => $payment->id,
+                            'extracted_from' => $referenceId,
+                        ]);
+                        return $payment;
+                    }
+                }
             }
         }
 
-        // Fallback: try to find by payment_gateway_id (Xendit invoice/charge ID)
-        $xenditId = $data['id'] ?? null;
-        if ($xenditId) {
-            return Payment::where('payment_gateway_id', $xenditId)->first();
+        // Priority 5: Handle nested data (V2 webhooks with nested structure)
+        if (isset($data['data']) && is_array($data['data'])) {
+            Log::info('Trying nested data lookup');
+            return $this->findPayment($data['data']);
         }
+
+        Log::warning('Payment not found with any method', [
+            'reference_id' => $referenceId,
+            'external_id' => $externalId,
+            'xendit_id' => $xenditId,
+        ]);
 
         return null;
     }
+
+    // =========================================================================
+    //  PAYMENT HANDLERS (Tetap seperti sebelumnya)
+    // =========================================================================
 
     /**
      * Handle Invoice webhook
@@ -193,11 +257,9 @@ class WebhookController extends Controller
                 'external_id' => $data['external_id'] ?? null,
                 'id' => $data['id'] ?? null,
             ]);
-            // Return 200 to prevent Xendit from retrying (for test webhooks / unknown IDs)
             return response()->json(['success' => true, 'message' => 'Payment not found, skipped']);
         }
 
-        // Prevent double processing
         if ($payment->isPaid()) {
             Log::info('Payment already paid, skipping', ['payment_id' => $payment->id]);
             return response()->json(['success' => true, 'message' => 'Already processed']);
@@ -245,15 +307,6 @@ class WebhookController extends Controller
 
     /**
      * Handle Virtual Account webhook
-     * 
-     * V1 format:
-     * {
-     *   "external_id": "VA-123" or "fixed-va-xxx",
-     *   "callback_virtual_account_id": "...",
-     *   "bank_code": "MANDIRI",
-     *   "amount": 80000,
-     *   ...
-     * }
      */
     protected function handleVirtualAccountWebhook(array $data)
     {
@@ -262,6 +315,7 @@ class WebhookController extends Controller
         if (!$payment) {
             Log::warning('Payment not found for VA webhook', [
                 'external_id' => $data['external_id'] ?? null,
+                'reference_id' => $data['reference_id'] ?? null,
                 'id' => $data['id'] ?? null,
             ]);
             return response()->json(['success' => true, 'message' => 'Payment not found, skipped']);
@@ -296,16 +350,6 @@ class WebhookController extends Controller
 
     /**
      * Handle E-Wallet webhook
-     * 
-     * V2 format (inside data):
-     * {
-     *   "id": "ewc_...",
-     *   "status": "SUCCEEDED",
-     *   "reference_id": "EWALLET-123" or "test-payload",
-     *   "channel_code": "ID_SHOPEEPAY",
-     *   "charge_amount": 20000,
-     *   ...
-     * }
      */
     protected function handleEWalletWebhook(array $data)
     {
@@ -375,16 +419,6 @@ class WebhookController extends Controller
 
     /**
      * Handle QRIS webhook
-     * 
-     * V2 format (inside data):
-     * {
-     *   "id": "qrpy_...",
-     *   "status": "SUCCEEDED",
-     *   "reference_id": "QRIS-123" or "testing_id_123",
-     *   "amount": 1500,
-     *   "channel_code": "ID_DANA",
-     *   ...
-     * }
      */
     protected function handleQRISWebhook(array $data)
     {
@@ -449,8 +483,6 @@ class WebhookController extends Controller
 
     /**
      * Handle Xendit V2 unified Payment Request webhook
-     * 
-     * Event: payment.succeeded, payment.failed, etc.
      */
     protected function handlePaymentRequestWebhook(array $data)
     {

@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\Admin\AdminController;
 use App\Http\Controllers\Api\SavingsGoalController;
 use App\Http\Controllers\Api\RecurringTransactionController;
 use App\Http\Controllers\Api\InvestmentController;
+use App\Http\Controllers\PaymentRedirectController;
 
 
 /*
@@ -31,7 +32,9 @@ use App\Http\Controllers\Api\InvestmentController;
 
 // Webhooks (dari payment gateway)
 Route::post('/webhooks/xendit', [WebhookController::class , 'xendit']);
-
+// Payment redirect routes
+Route::get('/payment/success', [PaymentRedirectController::class, 'success'])->name('payment.success');
+Route::get('/payment/failed', [PaymentRedirectController::class, 'failed'])->name('payment.failed');
 // Public routes
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class , 'register']);

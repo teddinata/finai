@@ -4,23 +4,19 @@ namespace App\Services;
 
 use Xendit\Configuration;
 use Xendit\Invoice\InvoiceApi;
-use Xendit\PaymentMethod\PaymentMethodApi;
 use Xendit\PaymentRequest\PaymentRequestApi;
 use App\Models\Payment;
 use App\Models\Invoice;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 
 class XenditService
 {
     protected $initialized = false;
     protected $invoiceApi;
-    protected $paymentMethodApi;
-    protected $paymentRequestApi;
 
     public function __construct()
     {
-    // Lazy load initialization
+        // Lazy load initialization
     }
 
     protected function initXendit()
@@ -31,9 +27,6 @@ class XenditService
 
         Configuration::setXenditKey(config('xendit.secret_key'));
         $this->invoiceApi = new InvoiceApi();
-        // $this->paymentMethodApi = new PaymentMethodApi(); 
-        // $this->paymentRequestApi = new PaymentRequestApi();
-
         $this->initialized = true;
     }
 
@@ -47,11 +40,14 @@ class XenditService
         $household = $payment->household;
         $plan = $payment->subscription->plan;
 
+        $externalId = 'PAYMENT-' . $payment->id;
+
+        // ✅ Langsung pakai amount (sudah IDR)
         $params = [
-            'external_id' => 'PAYMENT-' . $payment->id,
-            'amount' => $payment->total,
+            'external_id' => $externalId,
+            'amount' => $payment->total, // ✅ Langsung total
             'description' => "Subscription to {$plan->name} Plan",
-            'invoice_duration' => 86400, // 24 hours
+            'invoice_duration' => 86400,
             'customer' => [
                 'given_names' => $customerData['name'],
                 'email' => $customerData['email'],
@@ -68,7 +64,7 @@ class XenditService
                 [
                     'name' => $plan->name . ' Plan',
                     'quantity' => 1,
-                    'price' => $payment->amount,
+                    'price' => $payment->amount, // ✅ Langsung amount
                     'category' => 'Subscription',
                 ],
             ],
@@ -78,22 +74,23 @@ class XenditService
             $params['fees'] = [
                 [
                     'type' => 'Tax',
-                    'value' => $payment->tax,
+                    'value' => $payment->tax, // ✅ Langsung tax
                 ],
             ];
         }
 
-        // Use InvoiceApi instance
         $xenditInvoice = $this->invoiceApi->createInvoice($params);
 
         $payment->update([
             'payment_gateway_id' => $xenditInvoice['id'],
+            'payment_token' => $externalId,
             'snap_token' => $xenditInvoice['invoice_url'],
             'metadata' => [
                 'xendit_invoice_id' => $xenditInvoice['id'],
                 'invoice_url' => $xenditInvoice['invoice_url'],
                 'expiry_date' => $xenditInvoice['expiry_date'],
                 'payment_method' => 'invoice',
+                'external_id' => $externalId,
             ],
         ]);
 
@@ -111,17 +108,25 @@ class XenditService
     {
         $this->initXendit();
 
-        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
+        $apiInstance = new PaymentRequestApi();
 
         $validBanks = ['BNI', 'BRI', 'MANDIRI', 'PERMATA', 'BCA'];
         if (!in_array($bankCode, $validBanks)) {
             throw new \Exception("Invalid bank code. Must be one of: " . implode(', ', $validBanks));
         }
 
+        $referenceId = 'VA-' . $payment->id;
+
+        // Get user from payment
+        $user = $payment->user;
+        if (!$user) {
+            throw new \Exception("Payment has no associated user");
+        }
+
         $virtualAccountParams = new \Xendit\PaymentRequest\VirtualAccountParameters([
             'channel_code' => $bankCode,
             'channel_properties' => new \Xendit\PaymentRequest\VirtualAccountChannelProperties([
-                'customer_name' => $payment->user->name,
+                'customer_name' => $user->name,
                 'expires_at' => now()->addHours(24)->toIso8601String(),
             ]),
         ]);
@@ -133,34 +138,33 @@ class XenditService
         ]);
 
         $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
-            'reference_id' => 'VA-' . $payment->id,
-            'amount' => $payment->total,
+            'reference_id' => $referenceId,
+            'amount' => $payment->total, // ✅ Langsung total (IDR)
             'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
             'payment_method' => $paymentMethodParams
         ]);
 
         try {
             $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
-        }
-        catch (\Xendit\XenditSdkException $e) {
-            \Log::error('Xendit Create VA Error: ' . $e->getMessage());
+        } catch (\Xendit\XenditSdkException $e) {
+            Log::error('Xendit Create VA Error: ' . $e->getMessage());
             throw $e;
         }
 
-        // Extract VA number from response
-        // Result is an object, access via getters or array access if configured
         $vaNumber = $result['payment_method']['virtual_account']['channel_properties']['virtual_account_number'] ?? null;
         $vaId = $result['id'];
         $expiryDate = $result['payment_method']['virtual_account']['channel_properties']['expires_at'] ?? null;
 
         $payment->update([
             'payment_gateway_id' => $vaId,
+            'payment_token' => $referenceId,
             'metadata' => array_merge($payment->metadata ?? [], [
                 'va_number' => $vaNumber,
                 'bank_code' => $bankCode,
-                'va_id' => $vaId, // Payment Request ID
+                'va_id' => $vaId,
                 'payment_method' => 'virtual_account',
                 'expected_amount' => $payment->total,
+                'reference_id' => $referenceId,
             ]),
         ]);
 
@@ -180,12 +184,14 @@ class XenditService
     {
         $this->initXendit();
 
-        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
+        $apiInstance = new PaymentRequestApi();
 
         $validEwallets = ['OVO', 'DANA', 'LINKAJA', 'SHOPEEPAY'];
         if (!in_array($ewalletType, $validEwallets)) {
             throw new \Exception("Invalid e-wallet type. Must be one of: " . implode(', ', $validEwallets));
         }
+
+        $referenceId = 'EWALLET-' . $payment->id;
 
         $ewalletParams = new \Xendit\PaymentRequest\EWalletParameters([
             'channel_code' => $ewalletType,
@@ -202,28 +208,22 @@ class XenditService
         ]);
 
         $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
-            'reference_id' => 'EWALLET-' . $payment->id,
-            'amount' => $payment->total,
+            'reference_id' => $referenceId,
+            'amount' => $payment->total, // ✅ Langsung total (IDR)
             'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
             'payment_method' => $paymentMethodParams
         ]);
 
         try {
             $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
-        }
-        catch (\Xendit\XenditSdkException $e) {
-            \Log::error('Xendit Create EWallet Error: ' . $e->getMessage());
+        } catch (\Xendit\XenditSdkException $e) {
+            Log::error('Xendit Create EWallet Error: ' . $e->getMessage());
             throw $e;
         }
 
-        // Extract actions/checkout URL
         $actions = $result['actions'] ?? [];
         $checkoutUrl = null;
-        $mobileUrl = null;
-        $desktopUrl = null;
 
-        // PaymentRequest actions might differ from old EWallet charge actions.
-        // Usually 'action' field in Payment Request for URI/URL
         foreach ($actions as $action) {
             if ($action['action'] === 'AUTH') {
                 $checkoutUrl = $action['url'];
@@ -233,11 +233,13 @@ class XenditService
 
         $payment->update([
             'payment_gateway_id' => $result['id'],
+            'payment_token' => $referenceId,
             'snap_token' => $checkoutUrl,
             'metadata' => array_merge($payment->metadata ?? [], [
                 'ewallet_type' => $ewalletType,
                 'checkout_url' => $checkoutUrl,
                 'payment_method' => 'ewallet',
+                'reference_id' => $referenceId,
             ]),
         ]);
 
@@ -254,7 +256,9 @@ class XenditService
     {
         $this->initXendit();
 
-        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
+        $apiInstance = new PaymentRequestApi();
+
+        $referenceId = 'QRIS-' . $payment->id;
 
         $qrParams = new \Xendit\PaymentRequest\QRCodeParameters([
             'channel_code' => 'QRIS',
@@ -267,17 +271,16 @@ class XenditService
         ]);
 
         $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
-            'reference_id' => 'QRIS-' . $payment->id,
-            'amount' => $payment->total,
+            'reference_id' => $referenceId,
+            'amount' => $payment->total, // ✅ Langsung total (IDR)
             'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
             'payment_method' => $paymentMethodParams
         ]);
 
         try {
             $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
-        }
-        catch (\Xendit\XenditSdkException $e) {
-            \Log::error('Xendit Create QRIS Error: ' . $e->getMessage());
+        } catch (\Xendit\XenditSdkException $e) {
+            Log::error('Xendit Create QRIS Error: ' . $e->getMessage());
             throw $e;
         }
 
@@ -285,11 +288,13 @@ class XenditService
 
         $payment->update([
             'payment_gateway_id' => $result['id'],
-            'snap_token' => $qrString, // QR code string for display
+            'payment_token' => $referenceId,
+            'snap_token' => $qrString,
             'metadata' => array_merge($payment->metadata ?? [], [
                 'qris_id' => $result['id'],
                 'qr_string' => $qrString,
                 'payment_method' => 'qris',
+                'reference_id' => $referenceId,
             ]),
         ]);
 
@@ -300,30 +305,13 @@ class XenditService
     }
 
     /**
-     * Get Invoice/Payment Status
-     */
-    public function getInvoiceStatus(string $invoiceId)
-    {
-        $this->initXendit();
-        return $this->invoiceApi->getInvoiceById($invoiceId);
-    }
-
-    /**
      * Get Payment Request by ID
      */
     public function getPaymentRequest(string $prId)
     {
         $this->initXendit();
-        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
+        $apiInstance = new PaymentRequestApi();
         return $apiInstance->getPaymentRequestByID($prId);
-    }
-
-    /**
-     * Get Virtual Account by ID (Deprecated, use getPaymentRequest)
-     */
-    public function getVirtualAccount(string $prId)
-    {
-        return $this->getPaymentRequest($prId);
     }
 
     /**
@@ -334,7 +322,7 @@ class XenditService
         $expectedToken = config('xendit.webhook_token');
 
         if (empty($expectedToken)) {
-            \Log::warning('Xendit webhook token not configured');
+            Log::warning('Xendit webhook token not configured');
             return false;
         }
 
@@ -349,26 +337,28 @@ class XenditService
         // Convert object to array if needed
         if (is_object($xenditData) && method_exists($xenditData, 'toArray')) {
             $xenditData = $xenditData->toArray();
-        }
-        elseif (is_object($xenditData)) {
+        } elseif (is_object($xenditData)) {
             $xenditData = (array)$xenditData;
         }
 
         // Prevent double processing
-        if ($payment->status === 'paid') {
-            \Log::info('Payment already processed as paid', ['payment_id' => $payment->id]);
+        if ($payment->isPaid()) {
+            Log::info('Payment already processed as paid', ['payment_id' => $payment->id]);
             return true;
         }
 
         // Data Mapping
         $paidVia = $xenditData['payment_channel'] ?? $xenditData['payment_method']['type'] ?? 'unknown';
         $paidAmount = $xenditData['paid_amount'] ?? $xenditData['amount'] ?? $payment->total;
+        
+        // ✅ HAPUS konversi cents, langsung pakai amount
 
         $payment->markAsPaid($xenditData['id'], [
             'paid_via' => $paidVia,
-            'paid_amount' => $paidAmount,
+            'paid_amount' => $paidAmount, // ✅ Langsung IDR
             'xendit_fee' => $xenditData['xendit_fee'] ?? 0,
             'payment_id' => $xenditData['payment_id'] ?? null,
+            'webhook_received_at' => now()->toIso8601String(),
         ]);
 
         // Activate subscription
@@ -377,11 +367,11 @@ class XenditService
 
             // Calculate expiry based on plan type
             $expiresAt = match ($subscription->plan->type) {
-                    'monthly' => now()->addMonth(),
-                    'yearly' => now()->addYear(),
-                    'lifetime' => null,
-                    default => now()->addMonth(),
-                };
+                'monthly' => now()->addMonth(),
+                'yearly' => now()->addYear(),
+                'lifetime' => null,
+                default => now()->addMonth(),
+            };
 
             $subscription->update([
                 'status' => 'active',
@@ -394,7 +384,7 @@ class XenditService
                 'current_subscription_id' => $subscription->id,
             ]);
 
-            \Log::info('Subscription activated', [
+            Log::info('Subscription activated', [
                 'subscription_id' => $subscription->id,
                 'plan' => $subscription->plan->name,
                 'expires_at' => $expiresAt,
@@ -415,13 +405,14 @@ class XenditService
         $payment->markAsFailed([
             'failure_code' => $xenditData['failure_code'] ?? 'unknown',
             'failure_message' => $xenditData['failure_message'] ?? null,
+            'webhook_received_at' => now()->toIso8601String(),
         ]);
 
         if ($payment->subscription) {
             $payment->subscription->update(['status' => 'expired']);
         }
 
-        \Log::info('Payment marked as failed', [
+        Log::info('Payment marked as failed', [
             'payment_id' => $payment->id,
             'failure_code' => $xenditData['failure_code'] ?? 'unknown',
         ]);
@@ -460,15 +451,14 @@ class XenditService
                 'paid_at' => $payment->paid_at,
             ]);
 
-            \Log::info('Invoice created', ['invoice_id' => $invoice->id]);
-        }
-        else {
+            Log::info('Invoice created', ['invoice_id' => $invoice->id]);
+        } else {
             $invoice->update([
                 'status' => 'paid',
                 'paid_at' => $payment->paid_at,
             ]);
 
-            \Log::info('Invoice updated', ['invoice_id' => $invoice->id]);
+            Log::info('Invoice updated', ['invoice_id' => $invoice->id]);
         }
 
         return $invoice;
