@@ -83,7 +83,8 @@ class AuthController extends Controller
                 ],
             ], 201);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'message' => 'Registration failed',
@@ -108,12 +109,12 @@ class AuthController extends Controller
         try {
             // Find invite code
             $inviteCode = InviteCode::where('code', $validated['invite_code'])
-                                    ->with('household')
-                                    ->first();
+                ->with('household')
+                ->first();
 
             if (!$inviteCode->isValid()) {
                 return response()->json([
-                    'message' => 'Invalid or expired invite code',
+                    'message' => 'Kode undangan tidak valid atau sudah kadaluarsa',
                 ], 400);
             }
 
@@ -154,7 +155,8 @@ class AuthController extends Controller
                 'token' => $token,
             ], 201);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'message' => 'Registration failed',
