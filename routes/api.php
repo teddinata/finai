@@ -268,10 +268,12 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'check.admin'])->group(funct
 
     // Subscriptions Management
     Route::get('/subscriptions', [AdminController::class , 'subscriptions']);
+    Route::put('/subscriptions/{subscriptionId}', [AdminController::class , 'updateSubscription']);
     Route::post('/subscriptions/{subscriptionId}/cancel', [AdminController::class , 'cancelSubscription']);
 
     // Payments Management
     Route::get('/payments', [AdminController::class , 'payments']);
+    Route::put('/payments/{paymentId}', [AdminController::class , 'updatePayment']);
     Route::get('/revenue', [AdminController::class , 'revenue']);
 
     // Plans Management

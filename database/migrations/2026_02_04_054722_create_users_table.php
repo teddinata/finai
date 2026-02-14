@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     public function up(): void
     {
         Schema::create('users', function (Blueprint $table) {
@@ -14,16 +13,16 @@ return new class extends Migration
             $table->string('email')->unique();
             $table->string('password');
             $table->unsignedBigInteger('household_id')->nullable();
-            $table->enum('role', ['owner', 'member'])->default('member');
+            $table->enum('role', ['admin', 'owner', 'member'])->default('member');
             $table->boolean('is_billing_owner')->default(false);
             $table->boolean('active')->default(true);
             $table->rememberToken();
             $table->timestamps();
 
             $table->foreign('household_id')
-                  ->references('id')
-                  ->on('households')
-                  ->onDelete('cascade');
+                ->references('id')
+                ->on('households')
+                ->onDelete('cascade');
 
             $table->index(['household_id', 'role']);
         });

@@ -38,12 +38,12 @@ class AdminController extends Controller
         $activeSubscriptions = Subscription::where('status', 'active')->count();
         $trialSubscriptions = Subscription::where('status', 'trial')->count();
         $expiredSubscriptions = Subscription::where('status', 'expired')->count();
-        
+
         // Revenue Statistics (this month)
         $monthlyRevenue = Payment::where('status', 'paid')
             ->whereMonth('paid_at', $today->month)
             ->sum('total');
-        
+
         $todayRevenue = Payment::where('status', 'paid')
             ->whereDate('paid_at', $today)
             ->sum('total');
@@ -57,7 +57,7 @@ class AdminController extends Controller
         $aiScansToday = UsageLog::where('feature', 'ai_scan')
             ->whereDate('date', $today)
             ->sum('count');
-        
+
         $aiScansThisMonth = UsageLog::where('feature', 'ai_scan')
             ->whereMonth('date', $today->month)
             ->sum('count');
@@ -69,9 +69,9 @@ class AdminController extends Controller
             ->groupBy('plan_id')
             ->get()
             ->map(fn($item) => [
-                'plan' => $item->plan->name,
-                'count' => $item->count,
-            ]);
+        'plan' => $item->plan->name,
+        'count' => $item->count,
+        ]);
 
         // Recent Activity
         $recentUsers = User::latest()->take(5)->get();
@@ -125,7 +125,7 @@ class AdminController extends Controller
      */
     public function users(Request $request)
     {
-        $query = User::with(['household:id,name']);
+        $query = User::with(['household']);
 
         // Filters
         if ($request->has('role')) {
@@ -138,9 +138,9 @@ class AdminController extends Controller
 
         if ($request->has('search')) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+                    ->orWhere('email', 'like', "%{$search}%");
             });
         }
 
@@ -188,8 +188,8 @@ class AdminController extends Controller
     public function households(Request $request)
     {
         $query = Household::with([
-            'users:id,household_id,name,email,role',
-            'currentSubscription.plan:id,name,slug',
+            'users',
+            'currentSubscription.plan',
         ])->withCount('users', 'transactions');
 
         if ($request->has('search')) {
@@ -212,7 +212,7 @@ class AdminController extends Controller
             'transactions' => fn($q) => $q->latest()->take(20),
             'subscriptions' => fn($q) => $q->latest()->take(5),
         ])->withCount('transactions', 'users')
-          ->findOrFail($householdId);
+            ->findOrFail($householdId);
 
         return response()->json(['household' => $household]);
     }
@@ -223,8 +223,8 @@ class AdminController extends Controller
     public function subscriptions(Request $request)
     {
         $query = Subscription::with([
-            'household:id,name',
-            'plan:id,name,slug,price',
+            'household',
+            'plan',
         ]);
 
         if ($request->has('status')) {
@@ -264,9 +264,9 @@ class AdminController extends Controller
     public function payments(Request $request)
     {
         $query = Payment::with([
-            'user:id,name,email',
-            'household:id,name',
-            'subscription.plan:id,name',
+            'user',
+            'household',
+            'subscription.plan',
         ]);
 
         if ($request->has('status')) {
@@ -297,33 +297,157 @@ class AdminController extends Controller
             'group_by' => 'nullable|in:day,week,month',
         ]);
 
-        $startDate = $validated['start_date'] ?? now()->startOfMonth();
-        $endDate = $validated['end_date'] ?? now()->endOfMonth();
+        $startDate = $validated['start_date'] ?? now()->startOfMonth()->toDateString();
+        $endDate = $validated['end_date'] ?? now()->endOfMonth()->toDateString();
         $groupBy = $validated['group_by'] ?? 'day';
 
-        $dateFormat = match($groupBy) {
-            'day' => '%Y-%m-%d',
-            'week' => '%Y-%u',
-            'month' => '%Y-%m',
-        };
+        // Base query for the selected date range
+        $baseQuery = Payment::whereBetween('payments.created_at', [
+            Carbon::parse($startDate)->startOfDay(),
+            Carbon::parse($endDate)->endOfDay()
+        ]);
 
-        $revenue = Payment::where('status', 'paid')
-            ->whereBetween('paid_at', [$startDate, $endDate])
+        // 1. Overview Stats
+        $totalPayments = (clone $baseQuery)->count();
+        $paidPayments = (clone $baseQuery)->where('status', 'paid');
+        $totalRevenue = $paidPayments->sum('total');
+        $paidCount = $paidPayments->count();
+
+        $avgPayment = $paidCount > 0 ? $totalRevenue / $paidCount : 0;
+        $successRate = $totalPayments > 0 ? ($paidCount / $totalPayments) * 100 : 0;
+
+        // 2. Revenue over time (Chart Data)
+        $dateFormat = match ($groupBy) {
+                'day' => '%Y-%m-%d',
+                'week' => '%Y-%u',
+                'month' => '%Y-%m',
+            };
+
+        $revenueOverTime = Payment::where('status', 'paid')
+            ->whereBetween('paid_at', [
+            Carbon::parse($startDate)->startOfDay(),
+            Carbon::parse($endDate)->endOfDay()
+        ])
             ->select(
-                DB::raw("DATE_FORMAT(paid_at, '{$dateFormat}') as period"),
-                DB::raw('SUM(total) as total'),
-                DB::raw('COUNT(*) as count')
-            )
+            DB::raw("DATE_FORMAT(paid_at, '{$dateFormat}') as period"),
+            DB::raw('SUM(total) as total'),
+            DB::raw('COUNT(*) as count')
+        )
             ->groupBy('period')
             ->orderBy('period')
             ->get();
 
-        $totalRevenue = $revenue->sum('total');
+        // 3. Payment Status Breakdown
+        $paymentStatus = (clone $baseQuery)
+            ->select('status', DB::raw('COUNT(*) as count'), DB::raw('SUM(total) as total'))
+            ->groupBy('status')
+            ->get();
+
+        // 4. Top Plans Breakdown
+        $topPlans = (clone $baseQuery)
+            ->where('payments.status', 'paid')
+            ->join('subscriptions', 'payments.subscription_id', '=', 'subscriptions.id')
+            ->join('plans', 'subscriptions.plan_id', '=', 'plans.id')
+            ->select('plans.name as plan_name', DB::raw('COUNT(payments.id) as count'), DB::raw('SUM(payments.total) as total'))
+            ->groupBy('plans.name')
+            ->orderByDesc('total')
+            ->take(5)
+            ->get();
 
         return response()->json([
-            'revenue' => $revenue,
-            'total' => $totalRevenue,
+            'total_payments' => $totalPayments,
+            'total_revenue' => $totalRevenue, // Frontend expects this key
             'formatted_total' => 'Rp ' . number_format($totalRevenue / 100, 0, ',', '.'),
+            'avg_payment' => $avgPayment,
+            'success_rate' => round($successRate, 1),
+            'revenue' => $revenueOverTime, // For chart
+            'payment_status' => $paymentStatus,
+            'top_plans' => $topPlans,
+        ]);
+    }
+
+    /**
+     * Update Payment Status Manually
+     */
+    public function updatePayment(Request $request, $paymentId)
+    {
+        $validated = $request->validate([
+            'status' => 'required|in:paid,failed,expired,pending',
+        ]);
+
+        $payment = Payment::with('subscription.plan')->findOrFail($paymentId);
+        $oldStatus = $payment->status;
+        $newStatus = $validated['status'];
+
+        if ($oldStatus === $newStatus) {
+            return response()->json(['message' => 'Status is already ' . $newStatus]);
+        }
+
+        if ($newStatus === 'paid') {
+            // Use XenditService logic to ensure subscription activation
+            // We mock the Xendit data structure
+            $mockXenditData = [
+                'id' => $payment->payment_gateway_id ?? 'manual-' . time(),
+                'payment_channel' => 'MANUAL_ADMIN',
+                'paid_amount' => $payment->total,
+                'xendit_fee' => 0,
+                'payment_id' => 'manual-' . time(),
+            ];
+
+            // Resolve service manually since we are in AdminController
+            $xenditService = app(\App\Services\XenditService::class);
+            $xenditService->handlePaymentSuccess($payment, $mockXenditData);
+        }
+        elseif ($newStatus === 'failed') {
+            $payment->markAsFailed(['failure_reason' => 'Admin manual update']);
+            if ($payment->subscription) {
+                $payment->subscription->update(['status' => 'expired']);
+            }
+        }
+        else {
+            $payment->update(['status' => $newStatus]);
+        }
+
+        return response()->json([
+            'message' => 'Payment status updated successfully',
+            'payment' => $payment->fresh(),
+        ]);
+    }
+
+    /**
+     * Update Subscription Status Manually
+     */
+    public function updateSubscription(Request $request, $subscriptionId)
+    {
+        $validated = $request->validate([
+            'status' => 'required|in:active,expired,pending,canceled,trial',
+            'expires_at' => 'nullable|date',
+        ]);
+
+        $subscription = Subscription::with('plan')->findOrFail($subscriptionId);
+
+        $updateData = ['status' => $validated['status']];
+        if (isset($validated['expires_at'])) {
+            $updateData['expires_at'] = $validated['expires_at'];
+        }
+
+        // If activating, ensure started_at is set
+        if ($validated['status'] === 'active' && !$subscription->started_at) {
+            $updateData['started_at'] = now();
+        }
+
+        $subscription->update($updateData);
+
+        // If active, ensure household points to this
+        if ($validated['status'] === 'active') {
+            $subscription->household->update([
+                'current_subscription_id' => $subscription->id
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Subscription updated successfully',
+            'subscription' => $subscription->fresh(),
         ]);
     }
 
@@ -342,20 +466,20 @@ class AdminController extends Controller
         $activeHouseholds = Household::withCount([
             'transactions' => fn($q) => $q->whereMonth('created_at', now()->month)
         ])->orderByDesc('transactions_count')
-          ->take(10)
-          ->get();
+            ->take(10)
+            ->get();
 
         // Churn rate (cancelled subscriptions this month)
         $totalActiveLastMonth = Subscription::where('status', 'active')
             ->whereMonth('started_at', '<', now()->month)
             ->count();
-        
+
         $cancelledThisMonth = Subscription::where('status', 'canceled')
             ->whereMonth('canceled_at', now()->month)
             ->count();
 
-        $churnRate = $totalActiveLastMonth > 0 
-            ? ($cancelledThisMonth / $totalActiveLastMonth) * 100 
+        $churnRate = $totalActiveLastMonth > 0
+            ? ($cancelledThisMonth / $totalActiveLastMonth) * 100
             : 0;
 
         return response()->json([
