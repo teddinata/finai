@@ -57,7 +57,7 @@ class PlanSeeder extends Seeder
                 'name' => 'Pertalite',
                 'slug' => 'pertalite',
                 'type' => 'monthly', // Default type
-                'price' => 10000, // Monthly price (Rp 10.000 in cents)
+                'price' => 100, // Monthly price (Rp 10.000 in cents)
                 'currency' => 'IDR',
                 'description' => 'Tracking lengkap untuk keluarga kecil',
                 'is_active' => true,
@@ -105,7 +105,7 @@ class PlanSeeder extends Seeder
                 'name' => 'Pertamax',
                 'slug' => 'pertamax',
                 'type' => 'monthly',
-                'price' => 19000, // Monthly price (Rp 19.000 in cents)
+                'price' => 900, // Monthly price (Rp 19.000 in cents)
                 'currency' => 'IDR',
                 'description' => 'Kontrol penuh keuangan keluarga',
                 'is_active' => true,
@@ -155,7 +155,7 @@ class PlanSeeder extends Seeder
                 'name' => 'Turbo',
                 'slug' => 'turbo',
                 'type' => 'lifetime',
-                'price' => 149000, // Rp 149.000 in cents (lifetime)
+                'price' => 1000, // Rp 149.000 in cents (lifetime)
                 'currency' => 'IDR',
                 'description' => 'Sekali bayar, pakai selamanya',
                 'is_active' => true,
