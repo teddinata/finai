@@ -10,6 +10,7 @@ use App\Models\Account;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class TransactionController extends Controller
 {
@@ -143,13 +144,8 @@ class TransactionController extends Controller
                 'notes' => $validated['notes'],
             ]);
 
-            // ✅ Update account balance
-            if ($validated['type'] === 'income') {
-                $account->current_balance += $validated['total'];
-            } else {
-                $account->current_balance -= $validated['total'];
-            }
-            $account->save();
+            // ✅ Update account balance - Handled by Transaction Observer
+            // if ($validated['type'] === 'income') { ... }
 
             DB::commit();
 
@@ -448,71 +444,249 @@ class TransactionController extends Controller
     }
 
     /**
+     * Chat with AI to create transaction
+     */
+    public function chat(Request $request) 
+    {
+        $household = $request->user()->household;
+
+        // 1. Cek Limit Feature
+        // $limit = $household->getFeatureLimit('max_ai_chats_per_month'); // Implement limits later if needed
+        
+        $request->validate([
+            'message' => 'required|string|max:1000',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            // 2. Get Accounts for context
+            $accounts = Account::forHousehold($household->id)
+                ->active()
+                ->get(['id', 'name', 'type']);
+
+            // 3. Call Gemini AI
+            $extractedData = $this->extractChatData($request->message, $accounts);
+            
+
+
+            if (!$extractedData || isset($extractedData['error'])) {
+                throw new \Exception($extractedData['error'] ?? 'Gagal memproses pesan');
+            }
+
+            // 4. Create Transaction
+            $transaction = Transaction::create([
+                'household_id' => $household->id,
+                'created_by' => $request->user()->id,
+                'type' => 'expense', // Default, AI might override if income detected
+                'category_id' => $extractedData['category_id'] ?? $this->detectCategory($extractedData['merchant'] ?? null),
+                'account_id' => $extractedData['account_id'] ?? null,
+                'merchant' => $extractedData['merchant'] ?? 'Unknown',
+                'tanggal' => $extractedData['tanggal'] ?? now()->toDateString(),
+                'subtotal' => $extractedData['subtotal'],
+                'diskon' => $extractedData['diskon'],
+                'total' => $extractedData['total'],
+                'metode_pembayaran' => 'cash', // Default if account not linked to method
+                'source' => 'chat',
+                'notes' => $extractedData['notes'] ?? 'Auto-generated via Chat',
+            ]);
+            
+
+            
+            // Override type if AI detected income
+            if (isset($extractedData['type']) && in_array($extractedData['type'], ['income', 'expense'])) {
+                $transaction->type = $extractedData['type'];
+                $transaction->save();
+            }
+
+            // 5. Create Items
+            if (!empty($extractedData['items']) && is_array($extractedData['items'])) {
+                foreach ($extractedData['items'] as $item) {
+                    TransactionItem::create([
+                        'transaction_id' => $transaction->id,
+                        'nama' => $item['nama'],
+                        'qty' => $item['qty'],
+                        'harga_satuan' => $item['harga_satuan'],
+                        'harga_total' => $item['harga_total'],
+                    ]);
+                }
+            }
+
+            // 6. Update Account Balance - Handled by Transaction Observer
+            // if ($transaction->account_id) { ... }
+
+            // 7. Log Usage
+            UsageLog::logUsage($household->id, 'transaction', 1, $request->user()->id);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Transaksi berhasil dicatat',
+                'transaction' => $this->formatTransactionResponse($transaction->load(['category', 'items', 'account'])),
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Gagal memproses chat',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Extract receipt data using Gemini AI
      * Returns amounts in CENTS (IDR)
      */
     private function extractReceiptData(string $imagePath): ?array
     {
+        $fullPath = storage_path('app/public/' . $imagePath);
+        if (!file_exists($fullPath)) {
+            return ['error' => "File not found at: $fullPath"];
+        }
+        
+        $imageContent = base64_encode(file_get_contents($fullPath));
+
+        $prompt = "Analyze this receipt image. Extract transaction details.
+        
+        Rules:
+        1. Return ONLY valid JSON.
+        2. 'tanggal' format: YYYY-MM-DD.
+        3. 'metode_pembayaran' one of: cash, transfer, kartu_kredit, kartu_debit, ewallet.
+        4. Prices must be RAW INTEGERS (IDR). Example: if 15.000, return 15000. DO NOT include decimals or cents yet.
+        
+        JSON Schema:
+        {
+            \"merchant\": \"Store Name\",
+            \"tanggal\": \"2024-01-30\",
+            \"items\": [
+                {\"nama\": \"Item Name\", \"qty\": 1, \"harga_satuan\": 10000}
+            ],
+            \"subtotal\": 10000,
+            \"diskon\": 0,
+            \"total\": 10000,
+            \"metode_pembayaran\": \"cash\"
+        }";
+
+        return $this->sendGeminiRequest($prompt, $imageContent);
+    }
+
+    /**
+     * Extract chat data using Gemini AI
+     */
+    /**
+     * Extract chat data using Gemini AI
+     */
+    private function extractChatData(string $message, $accounts): ?array
+    {
+        $accountContext = $accounts->map(function($acc) {
+            return "- ID: {$acc->id}, Name: {$acc->name} ({$acc->type})";
+        })->implode("\n");
+
+        // Fetch Categories
+        $categories = \App\Models\Category::where('household_id', auth()->user()->household_id)
+            ->orWhereNull('household_id')
+            ->get(['id', 'name', 'type']);
+
+        $categoryContext = $categories->map(function($cat) {
+            return "- ID: {$cat->id}, Name: {$cat->name} ({$cat->type})";
+        })->implode("\n");
+
+        $prompt = "Analyze this transaction chat message. Extract transaction details.
+        
+        Current Context:
+        Today is " . now()->toDateString() . ".
+        
+        Available Accounts:
+        {$accountContext}
+
+        Available Categories:
+        {$categoryContext}
+
+        Rules:
+        1. Parse the user's message to find transaction details.
+        2. 'account_id': Match account mentioned.
+        3. 'type': 
+           - Detect if it's EXPENSE (spending) or INCOME (receiving). 
+           - 'Gaji', 'Bonus', 'Terima uang' -> INCOME.
+           - 'Beli', 'Bayar', 'Jajan' -> EXPENSE.
+        4. 'category_id': MUST match item/merchant to one of Available Categories BY ID.
+           - IF 'type' is INCOME, look ONLY at INCOME categories (e.g. 'Gaji', 'Bonus').
+           - IF 'type' is EXPENSE, look ONLY at EXPENSE categories.
+           - Examples: 
+             - 'Token Listrik'/'Listrik' -> 'Tagihan & Utilitas'
+             - 'Gaji' -> 'Gaji'
+             - 'Bensin' -> 'Transportasi'
+             - 'Makan' -> 'Makanan & Minuman'
+        5. 'merchant': Store/Person name. 
+           - INFER generic name if specific name missing (e.g. 'listrik' -> 'PLN', 'gaji' -> 'Kantor/Perusahaan').
+           - If truly unknown, return '-'.
+        6. Prices are RAW INTEGERS (IDR).
+        7. Return ONLY valid JSON.
+
+        JSON Schema:
+        {
+            \"merchant\": \"Store Name or Generic Name or '-'\",
+            \"items\": [
+                {\"nama\": \"Item Name\", \"qty\": 1, \"harga_satuan\": 10000}
+            ],
+            \"subtotal\": 10000,
+            \"diskon\": 0,
+            \"total\": 10000,
+            \"account_id\": 123,
+            \"category_id\": 456,
+            \"type\": \"expense\" OR \"income\",
+            \"notes\": \"Original message or summary\"
+        }
+
+        Message: \"{$message}\"
+        ";
+
+        return $this->sendGeminiRequest($prompt);
+    }
+
+    /**
+     * Send request to Gemini API
+     */
+    private function sendGeminiRequest(string $prompt, ?string $imageBase64 = null): array
+    {
         try {
-            $fullPath = storage_path('app/public/' . $imagePath);
-            if (!file_exists($fullPath)) {
-                throw new \Exception("File not found at: $fullPath");
-            }
-            
-            $imageContent = base64_encode(file_get_contents($fullPath));
-
-            // Prompt meminta RAW Integer (jangan suruh AI kali 100, nanti pusing)
-            $prompt = "Analyze this receipt image. Extract transaction details.
-            
-            Rules:
-            1. Return ONLY valid JSON.
-            2. 'tanggal' format: YYYY-MM-DD.
-            3. 'metode_pembayaran' one of: cash, transfer, kartu_kredit, kartu_debit, ewallet.
-            4. Prices must be RAW INTEGERS (IDR). Example: if 15.000, return 15000. DO NOT include decimals or cents yet.
-            
-            JSON Schema:
-            {
-                \"merchant\": \"Store Name\",
-                \"tanggal\": \"2024-01-30\",
-                \"items\": [
-                    {\"nama\": \"Item Name\", \"qty\": 1, \"harga_satuan\": 10000}
-                ],
-                \"subtotal\": 10000,
-                \"diskon\": 0,
-                \"total\": 10000,
-                \"metode_pembayaran\": \"cash\"
-            }";
-
-            // Gunakan Model yang stabil
             $model = 'gemini-2.5-flash';
             $apiKey = config('services.gemini.api_key');
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
-            $client = new \GuzzleHttp\Client();
-            $response = $client->post($url, [
-                'headers' => ['Content-Type' => 'application/json'],
-                'json' => [
-                    'contents' => [
-                        ['parts' => [
-                            ['text' => $prompt],
-                            ['inline_data' => ['mime_type' => 'image/jpeg', 'data' => $imageContent]]
-                        ]]
-                    ],
-                    'generationConfig' => [
-                        'temperature' => 0.1,
-                        'maxOutputTokens' => 4000,
-                        'response_mime_type' => 'application/json',
-                    ]
-                ],
-                'timeout' => 45,
+            $parts = [['text' => $prompt]];
+            if ($imageBase64) {
+                $parts[] = ['inline_data' => ['mime_type' => 'image/jpeg', 'data' => $imageBase64]];
+            }
+
+            $client = \Illuminate\Support\Facades\Http::withHeaders([
+                'Content-Type' => 'application/json',
             ]);
 
-            $result = json_decode($response->getBody()->getContents(), true);
+            $response = $client->post($url, [
+                'contents' => [
+                    ['parts' => $parts]
+                ],
+                'generationConfig' => [
+                    'temperature' => 0.1,
+                    'maxOutputTokens' => 4000,
+                    'response_mime_type' => 'application/json',
+                ]
+            ]);
+
+            if ($response->status() === 429) {
+                return ['error' => 'Limit penggunaan AI tercapai (Gemini Quota). Silakan tunggu sebentar sebelum mencoba lagi.'];
+            }
+
+            if ($response->failed()) {
+                throw new \Exception('Gemini API Error: ' . $response->body());
+            }
+
+            $result = $response->json();
             $text = $result['candidates'][0]['content']['parts'][0]['text'] ?? null;
 
             if (!$text) return ['error' => 'Empty AI Response'];
 
-            // Bersihkan potensi markdown
             $cleanJson = str_replace(['```json', '```'], '', $text);
             $data = json_decode($cleanJson, true);
 
@@ -521,9 +695,7 @@ class TransactionController extends Controller
                 return ['error' => 'Invalid JSON Format from AI'];
             }
 
-            // === CORE FIX: KONVERSI KE CENTS ===
-            // Kalikan semua unsur harga dengan 100
-            
+            // Calculation and formatting
             $total = (int) ($data['total'] ?? 0);
             $subtotal = (int) ($data['subtotal'] ?? $total);
             $diskon = (int) ($data['diskon'] ?? 0);
@@ -537,7 +709,6 @@ class TransactionController extends Controller
                     $qty = (int) ($item['qty'] ?? 1);
                     $hargaSatuan = (int) ($item['harga_satuan'] ?? 0);
                     
-                    // Update Item ke Cents
                     $item['harga_satuan'] = $hargaSatuan;
                     $item['harga_total'] = ($hargaSatuan * $qty);
                 }
@@ -548,7 +719,7 @@ class TransactionController extends Controller
             return $data;
 
         } catch (\Exception $e) {
-            \Log::error("Extract Receipt Error: " . $e->getMessage());
+            \Log::error("Gemini API Error: " . $e->getMessage());
             return ['error' => $e->getMessage()];
         }
     }
@@ -642,3 +813,4 @@ class TransactionController extends Controller
         ];
     }
 }
+ 

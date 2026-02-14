@@ -15,7 +15,7 @@
         "laravel/sanctum": "^4.3",
         "laravel/telescope": "^5.16",
         "laravel/tinker": "^2.10.1",
-        "xendit/xendit-php": "*"
+        "xendit/xendit-php": "^7.0"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

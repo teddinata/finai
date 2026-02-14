@@ -47,36 +47,56 @@ class UsageLog extends Model
     public function scopeForMonth($query, int $year, int $month)
     {
         return $query->whereYear('date', $year)
-                    ->whereMonth('date', $month);
+            ->whereMonth('date', $month);
     }
 
     public function scopeThisMonth($query)
     {
         return $query->whereYear('date', now()->year)
-                    ->whereMonth('date', now()->month);
+            ->whereMonth('date', now()->month);
     }
 
     // Helper methods
     public static function logUsage(
-        int $householdId, 
-        string $feature, 
+        int $householdId,
+        string $feature,
         int $count = 1,
         ?int $userId = null,
         ?array $metadata = null
-    ): self {
-        // 1. Cari data hari ini, atau buat baru dengan count 0
-        $log = static::firstOrCreate(
-            [
-                'household_id' => $householdId,
-                'feature' => $feature,
-                'date' => now()->toDateString(),
-            ],
-            [
-                'count' => 0, // Inisialisasi 0 agar aman
-                'user_id' => $userId,
-                'metadata' => $metadata,
-            ]
-        );
+        ): self
+    {
+        $date = now()->toDateString();
+
+        // 1. Cari data hari ini
+        $log = static::where('household_id', $householdId)
+            ->where('feature', $feature)
+            ->whereDate('date', $date)
+            ->first();
+
+        if (!$log) {
+            try {
+                $log = static::create([
+                    'household_id' => $householdId,
+                    'feature' => $feature,
+                    'date' => $date,
+                    'count' => 0,
+                    'user_id' => $userId,
+                    'metadata' => $metadata,
+                ]);
+            }
+            catch (\Illuminate\Database\QueryException $e) {
+                // Handle race condition: jika gagal create karena unique constraint, coba ambil lagi
+                if ($e->getCode() === '23000') {
+                    $log = static::where('household_id', $householdId)
+                        ->where('feature', $feature)
+                        ->whereDate('date', $date)
+                        ->firstOrFail();
+                }
+                else {
+                    throw $e;
+                }
+            }
+        }
 
         // 2. Tambahkan count (Increment otomatis handle matematika & save)
         $log->increment('count', $count);
@@ -84,9 +104,11 @@ class UsageLog extends Model
         // 3. (Opsional) Update metadata/user terakhir jika diperlukan
         if ($userId || $metadata) {
             $updates = [];
-            if ($userId) $updates['user_id'] = $userId;
-            if ($metadata) $updates['metadata'] = $metadata;
-            
+            if ($userId)
+                $updates['user_id'] = $userId;
+            if ($metadata)
+                $updates['metadata'] = $metadata;
+
             if (!empty($updates)) {
                 $log->update($updates);
             }
@@ -98,9 +120,9 @@ class UsageLog extends Model
     public static function getMonthlyUsage(int $householdId, string $feature): int
     {
         return static::where('household_id', $householdId)
-                    ->where('feature', $feature)
-                    ->thisMonth()
-                    ->sum('count');
+            ->where('feature', $feature)
+            ->thisMonth()
+            ->sum('count');
     }
 
     public static function hasReachedLimit(int $householdId, string $feature, int $limit): bool

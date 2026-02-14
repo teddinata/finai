@@ -2,13 +2,21 @@
 
 namespace App\Services;
 
-use Xendit\Xendit;
+use Xendit\Configuration;
+use Xendit\Invoice\InvoiceApi;
+use Xendit\PaymentMethod\PaymentMethodApi;
+use Xendit\PaymentRequest\PaymentRequestApi;
 use App\Models\Payment;
 use App\Models\Invoice;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class XenditService
 {
     protected $initialized = false;
+    protected $invoiceApi;
+    protected $paymentMethodApi;
+    protected $paymentRequestApi;
 
     public function __construct()
     {
@@ -21,11 +29,11 @@ class XenditService
             return;
         }
 
-        if (!class_exists('\Xendit\Xendit')) {
-            throw new \Exception('Xendit SDK not installed. Run: composer require xendit/xendit-php');
-        }
+        Configuration::setXenditKey(config('xendit.secret_key'));
+        $this->invoiceApi = new InvoiceApi();
+        // $this->paymentMethodApi = new PaymentMethodApi(); 
+        // $this->paymentRequestApi = new PaymentRequestApi();
 
-        \Xendit\Xendit::setApiKey(config('xendit.secret_key'));
         $this->initialized = true;
     }
 
@@ -75,7 +83,8 @@ class XenditService
             ];
         }
 
-        $xenditInvoice = \Xendit\Invoice::create($params);
+        // Use InvoiceApi instance
+        $xenditInvoice = $this->invoiceApi->createInvoice($params);
 
         $payment->update([
             'payment_gateway_id' => $xenditInvoice['id'],
@@ -96,126 +105,197 @@ class XenditService
     }
 
     /**
-     * Create Virtual Account
+     * Create Virtual Account using Payment Request API
      */
     public function createVirtualAccount(Payment $payment, string $bankCode = 'BNI')
     {
         $this->initXendit();
+
+        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
 
         $validBanks = ['BNI', 'BRI', 'MANDIRI', 'PERMATA', 'BCA'];
         if (!in_array($bankCode, $validBanks)) {
             throw new \Exception("Invalid bank code. Must be one of: " . implode(', ', $validBanks));
         }
 
-        $params = [
-            'external_id' => 'VA-' . $payment->id,
-            'bank_code' => $bankCode,
-            'name' => $payment->user->name,
-            'expected_amount' => $payment->total,
-            'is_closed' => true, // Closed VA (exact amount)
-            'expiration_date' => now()->addHours(24)->toIso8601String(),
-        ];
+        $virtualAccountParams = new \Xendit\PaymentRequest\VirtualAccountParameters([
+            'channel_code' => $bankCode,
+            'channel_properties' => new \Xendit\PaymentRequest\VirtualAccountChannelProperties([
+                'customer_name' => $payment->user->name,
+                'expires_at' => now()->addHours(24)->toIso8601String(),
+            ]),
+        ]);
 
-        $va = \Xendit\VirtualAccounts::create($params);
+        $paymentMethodParams = new \Xendit\PaymentRequest\PaymentMethodParameters([
+            'type' => 'VIRTUAL_ACCOUNT',
+            'reusability' => 'ONE_TIME_USE',
+            'virtual_account' => $virtualAccountParams,
+        ]);
+
+        $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
+            'reference_id' => 'VA-' . $payment->id,
+            'amount' => $payment->total,
+            'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
+            'payment_method' => $paymentMethodParams
+        ]);
+
+        try {
+            $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
+        }
+        catch (\Xendit\XenditSdkException $e) {
+            \Log::error('Xendit Create VA Error: ' . $e->getMessage());
+            throw $e;
+        }
+
+        // Extract VA number from response
+        // Result is an object, access via getters or array access if configured
+        $vaNumber = $result['payment_method']['virtual_account']['channel_properties']['virtual_account_number'] ?? null;
+        $vaId = $result['id'];
+        $expiryDate = $result['payment_method']['virtual_account']['channel_properties']['expires_at'] ?? null;
 
         $payment->update([
-            'payment_gateway_id' => $va['id'],
+            'payment_gateway_id' => $vaId,
             'metadata' => array_merge($payment->metadata ?? [], [
-                'va_number' => $va['account_number'],
-                'bank_code' => $va['bank_code'],
-                'va_id' => $va['id'],
+                'va_number' => $vaNumber,
+                'bank_code' => $bankCode,
+                'va_id' => $vaId, // Payment Request ID
                 'payment_method' => 'virtual_account',
-                'expected_amount' => $va['expected_amount'],
+                'expected_amount' => $payment->total,
             ]),
         ]);
 
         return [
-            'va_id' => $va['id'],
-            'va_number' => $va['account_number'],
-            'bank_code' => $va['bank_code'],
-            'expected_amount' => $va['expected_amount'],
-            'expiration_date' => $va['expiration_date'],
+            'va_id' => $vaId,
+            'va_number' => $vaNumber,
+            'bank_code' => $bankCode,
+            'expected_amount' => $payment->total,
+            'expiration_date' => $expiryDate,
         ];
     }
 
     /**
-     * Create E-Wallet Charge
+     * Create E-Wallet Charge using Payment Request API
      */
     public function createEWalletCharge(Payment $payment, string $ewalletType = 'OVO')
     {
         $this->initXendit();
+
+        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
 
         $validEwallets = ['OVO', 'DANA', 'LINKAJA', 'SHOPEEPAY'];
         if (!in_array($ewalletType, $validEwallets)) {
             throw new \Exception("Invalid e-wallet type. Must be one of: " . implode(', ', $validEwallets));
         }
 
-        $params = [
-            'reference_id' => 'EWALLET-' . $payment->id,
-            'currency' => 'IDR',
-            'amount' => $payment->total,
-            'checkout_method' => 'ONE_TIME_PAYMENT',
+        $ewalletParams = new \Xendit\PaymentRequest\EWalletParameters([
             'channel_code' => $ewalletType,
-            'channel_properties' => [
-                'success_redirect_url' => config('xendit.success_redirect_url'),
-                'failure_redirect_url' => config('xendit.failure_redirect_url'),
-            ],
-        ];
+            'channel_properties' => new \Xendit\PaymentRequest\EWalletChannelProperties([
+                'success_return_url' => config('xendit.success_redirect_url'),
+                'failure_return_url' => config('xendit.failure_redirect_url'),
+            ]),
+        ]);
 
-        $charge = \Xendit\EWallets::createEWalletCharge($params);
+        $paymentMethodParams = new \Xendit\PaymentRequest\PaymentMethodParameters([
+            'type' => 'EWALLET',
+            'reusability' => 'ONE_TIME_USE',
+            'ewallet' => $ewalletParams,
+        ]);
 
-        $checkoutUrl = $charge['actions']['desktop_web_checkout_url'] ?? $charge['actions']['mobile_web_checkout_url'] ?? null;
+        $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
+            'reference_id' => 'EWALLET-' . $payment->id,
+            'amount' => $payment->total,
+            'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
+            'payment_method' => $paymentMethodParams
+        ]);
+
+        try {
+            $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
+        }
+        catch (\Xendit\XenditSdkException $e) {
+            \Log::error('Xendit Create EWallet Error: ' . $e->getMessage());
+            throw $e;
+        }
+
+        // Extract actions/checkout URL
+        $actions = $result['actions'] ?? [];
+        $checkoutUrl = null;
+        $mobileUrl = null;
+        $desktopUrl = null;
+
+        // PaymentRequest actions might differ from old EWallet charge actions.
+        // Usually 'action' field in Payment Request for URI/URL
+        foreach ($actions as $action) {
+            if ($action['action'] === 'AUTH') {
+                $checkoutUrl = $action['url'];
+                break;
+            }
+        }
 
         $payment->update([
-            'payment_gateway_id' => $charge['id'],
+            'payment_gateway_id' => $result['id'],
             'snap_token' => $checkoutUrl,
             'metadata' => array_merge($payment->metadata ?? [], [
                 'ewallet_type' => $ewalletType,
                 'checkout_url' => $checkoutUrl,
-                'mobile_url' => $charge['actions']['mobile_web_checkout_url'] ?? null,
-                'desktop_url' => $charge['actions']['desktop_web_checkout_url'] ?? null,
                 'payment_method' => 'ewallet',
             ]),
         ]);
 
         return [
-            'charge_id' => $charge['id'],
+            'charge_id' => $result['id'],
             'checkout_url' => $checkoutUrl,
-            'mobile_url' => $charge['actions']['mobile_web_checkout_url'] ?? null,
-            'desktop_url' => $charge['actions']['desktop_web_checkout_url'] ?? null,
         ];
     }
 
     /**
-     * Create QRIS Payment
+     * Create QRIS Payment using Payment Request API
      */
     public function createQRIS(Payment $payment)
     {
         $this->initXendit();
 
-        $params = [
-            'reference_id' => 'QRIS-' . $payment->id,
-            'type' => 'DYNAMIC',
-            'currency' => 'IDR',
-            'amount' => $payment->total,
-            'callback_url' => config('xendit.webhook_url'),
-        ];
+        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
 
-        $qris = \Xendit\QRCode::create($params);
+        $qrParams = new \Xendit\PaymentRequest\QRCodeParameters([
+            'channel_code' => 'QRIS',
+        ]);
+
+        $paymentMethodParams = new \Xendit\PaymentRequest\PaymentMethodParameters([
+            'type' => 'QR_CODE',
+            'reusability' => 'ONE_TIME_USE',
+            'qr_code' => $qrParams,
+        ]);
+
+        $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
+            'reference_id' => 'QRIS-' . $payment->id,
+            'amount' => $payment->total,
+            'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
+            'payment_method' => $paymentMethodParams
+        ]);
+
+        try {
+            $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
+        }
+        catch (\Xendit\XenditSdkException $e) {
+            \Log::error('Xendit Create QRIS Error: ' . $e->getMessage());
+            throw $e;
+        }
+
+        $qrString = $result['payment_method']['qr_code']['channel_properties']['qr_string'] ?? null;
 
         $payment->update([
-            'payment_gateway_id' => $qris['id'],
-            'snap_token' => $qris['qr_string'], // QR code string for display
+            'payment_gateway_id' => $result['id'],
+            'snap_token' => $qrString, // QR code string for display
             'metadata' => array_merge($payment->metadata ?? [], [
-                'qris_id' => $qris['id'],
-                'qr_string' => $qris['qr_string'],
+                'qris_id' => $result['id'],
+                'qr_string' => $qrString,
                 'payment_method' => 'qris',
             ]),
         ]);
 
         return [
-            'qris_id' => $qris['id'],
-            'qr_string' => $qris['qr_string'],
+            'qris_id' => $result['id'],
+            'qr_string' => $qrString,
         ];
     }
 
@@ -225,16 +305,25 @@ class XenditService
     public function getInvoiceStatus(string $invoiceId)
     {
         $this->initXendit();
-        return \Xendit\Invoice::retrieve($invoiceId);
+        return $this->invoiceApi->getInvoiceById($invoiceId);
     }
 
     /**
-     * Get Virtual Account by ID
+     * Get Payment Request by ID
      */
-    public function getVirtualAccount(string $vaId)
+    public function getPaymentRequest(string $prId)
     {
         $this->initXendit();
-        return \Xendit\VirtualAccounts::retrieve($vaId);
+        $apiInstance = new \Xendit\PaymentRequest\PaymentRequestApi();
+        return $apiInstance->getPaymentRequestByID($prId);
+    }
+
+    /**
+     * Get Virtual Account by ID (Deprecated, use getPaymentRequest)
+     */
+    public function getVirtualAccount(string $prId)
+    {
+        return $this->getPaymentRequest($prId);
     }
 
     /**
@@ -255,17 +344,29 @@ class XenditService
     /**
      * Handle Payment Success
      */
-    public function handlePaymentSuccess(Payment $payment, array $xenditData)
+    public function handlePaymentSuccess(Payment $payment, $xenditData)
     {
+        // Convert object to array if needed
+        if (is_object($xenditData) && method_exists($xenditData, 'toArray')) {
+            $xenditData = $xenditData->toArray();
+        }
+        elseif (is_object($xenditData)) {
+            $xenditData = (array)$xenditData;
+        }
+
         // Prevent double processing
         if ($payment->status === 'paid') {
             \Log::info('Payment already processed as paid', ['payment_id' => $payment->id]);
             return true;
         }
 
+        // Data Mapping
+        $paidVia = $xenditData['payment_channel'] ?? $xenditData['payment_method']['type'] ?? 'unknown';
+        $paidAmount = $xenditData['paid_amount'] ?? $xenditData['amount'] ?? $payment->total;
+
         $payment->markAsPaid($xenditData['id'], [
-            'paid_via' => $xenditData['payment_channel'] ?? 'unknown',
-            'paid_amount' => $xenditData['paid_amount'] ?? $payment->total,
+            'paid_via' => $paidVia,
+            'paid_amount' => $paidAmount,
             'xendit_fee' => $xenditData['xendit_fee'] ?? 0,
             'payment_id' => $xenditData['payment_id'] ?? null,
         ]);

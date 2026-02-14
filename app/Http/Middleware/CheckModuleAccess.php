@@ -28,7 +28,7 @@ class CheckModuleAccess
 
         if (!$subscription || !$subscription->isActive()) {
             return response()->json([
-                'message' => 'Active subscription required',
+                'message' => 'Akses terbatas. Silakan berlangganan untuk menggunakan fitur ini.',
                 'module' => $module,
             ], 402);
         }
@@ -36,7 +36,7 @@ class CheckModuleAccess
         // Check if plan can access this module
         if (!$household->canAccessModule($module)) {
             $plan = $subscription->plan;
-            
+
             return response()->json([
                 'message' => "Fitur '{$module}' tidak tersedia pada paket Anda saat ini. Silakan tingkatkan paket Anda untuk mengakses fitur ini.",
                 'current_plan' => $plan->name,
@@ -54,14 +54,14 @@ class CheckModuleAccess
      */
     private function getRequiredPlans(string $module): array
     {
-        return match($module) {
-            'budget' => ['Pertalite', 'Pertamax', 'Turbo'],
-            'analytics' => ['Pertalite', 'Pertamax', 'Turbo'],
-            'assets' => ['Pertalite', 'Pertamax', 'Turbo'],
-            'debts' => ['Pertamax', 'Turbo'],
-            'networth' => ['Pertamax', 'Turbo'],
-            'investments' => ['Turbo'],
-            default => [],
-        };
+        return match ($module) {
+                'budget' => ['Pertalite', 'Pertamax', 'Turbo'],
+                'analytics' => ['Pertalite', 'Pertamax', 'Turbo'],
+                'assets' => ['Pertalite', 'Pertamax', 'Turbo'],
+                'debts' => ['Pertamax', 'Turbo'],
+                'networth' => ['Pertamax', 'Turbo'],
+                'investments' => ['Turbo'],
+                default => [],
+            };
     }
 }

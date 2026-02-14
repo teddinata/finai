@@ -80,20 +80,20 @@ class Plan extends Model
     public function hasFeature(string $key): bool
     {
         $value = $this->features[$key] ?? false;
-        
+
         // Handle different value types
         if (is_bool($value)) {
             return $value;
         }
-        
+
         if (is_string($value)) {
             return !in_array($value, ['false', 'default', 'basic', 'limited']);
         }
-        
+
         if (is_numeric($value)) {
             return $value !== 0;
         }
-        
+
         return !empty($value);
     }
 
@@ -136,16 +136,16 @@ class Plan extends Model
     public function canAccessModule(string $module): bool
     {
         $value = $this->getFeature($module, false);
-        
+
         if (is_bool($value)) {
             return $value;
         }
-        
+
         // For string values like 'basic', 'advanced', etc.
         if (is_string($value)) {
             return !in_array($value, ['false', 'none']);
         }
-        
+
         return false;
     }
 
@@ -166,18 +166,18 @@ class Plan extends Model
         if ($this->price === 0) {
             return 'Gratis';
         }
-        
+
         if ($this->isLifetime()) {
-            return 'Rp ' . number_format($this->price / 100, 0, ',', '.') . ' (Lifetime)';
+            return 'Rp ' . number_format($this->price, 0, ',', '.') . ' (Lifetime)';
         }
-        
-        $monthly = 'Rp ' . number_format($this->price / 100, 0, ',', '.');
-        
-        return match($this->type) {
-            'monthly' => $monthly . '/bulan',
-            'yearly' => $monthly . '/tahun',
-            default => $monthly,
-        };
+
+        $monthly = 'Rp ' . number_format($this->price, 0, ',', '.');
+
+        return match ($this->type) {
+                'monthly' => $monthly . '/bulan',
+                'yearly' => $monthly . '/tahun',
+                default => $monthly,
+            };
     }
 
     /**
@@ -188,12 +188,12 @@ class Plan extends Model
         if ($this->type === 'yearly') {
             return (int)round($this->price / 365);
         }
-        
+
         if ($this->type === 'lifetime') {
             // Assume 2 years for lifetime calculation
             return (int)round($this->price / 730);
         }
-        
+
         return null;
     }
 
@@ -203,12 +203,12 @@ class Plan extends Model
     public function getFormattedDailyCost(): ?string
     {
         $daily = $this->getDailyCost();
-        
+
         if (!$daily) {
             return null;
         }
-        
-        return 'Rp ' . number_format($daily / 100, 0, ',', '.') . '/hari';
+
+        return 'Rp ' . number_format($daily, 0, ',', '.') . '/hari';
     }
 
     /**
@@ -224,11 +224,11 @@ class Plan extends Model
      */
     public function getUpgradeMessage(): ?string
     {
-        return match($this->slug) {
-            'premium-free' => 'Mau pakai bareng pasangan? Upgrade ke Pertalite!',
-            'pertalite' => 'Butuh web access & analytics? Upgrade ke Pertamax!',
-            'pertamax' => 'Mau unlimited & AI insights? Upgrade ke Turbo!',
-            default => null,
-        };
+        return match ($this->slug) {
+                'premium-free' => 'Mau pakai bareng pasangan? Upgrade ke Pertalite!',
+                'pertalite' => 'Butuh web access & analytics? Upgrade ke Pertamax!',
+                'pertamax' => 'Mau unlimited & AI insights? Upgrade ke Turbo!',
+                default => null,
+            };
     }
 }

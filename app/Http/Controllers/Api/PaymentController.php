@@ -43,14 +43,17 @@ class PaymentController extends Controller
 
         // Check if there's pending payment
         $existingPayment = Payment::where('subscription_id', $subscription->id)
-                                  ->where('status', 'pending')
-                                  ->first();
+            ->where('status', 'pending')
+            ->first();
 
         if ($existingPayment) {
-            return response()->json([
-                'message' => 'There is already a pending payment',
-                'payment' => $this->formatPaymentResponse($existingPayment),
-            ], 400);
+            // Auto-expire old pending payment to allow new attempt
+            $existingPayment->update(['status' => 'expired']);
+
+            \Log::info('Expired old pending payment to create new one', [
+                'old_payment_id' => $existingPayment->id,
+                'user_id' => $user->id
+            ]);
         }
 
         // Create payment record
@@ -96,9 +99,10 @@ class PaymentController extends Controller
                 'payment_data' => $result,
             ], 201);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             $payment->delete();
-            
+
             return response()->json([
                 'message' => 'Failed to create payment',
                 'error' => $e->getMessage(),
@@ -119,15 +123,30 @@ class PaymentController extends Controller
         // Refresh from Xendit
         if ($payment->payment_gateway_id && $payment->isPending()) {
             try {
-                $xenditInvoice = $this->xenditService->getInvoiceStatus($payment->payment_gateway_id);
-                
-                // Update status based on Xendit
-                if ($xenditInvoice['status'] === 'PAID') {
-                    $this->xenditService->handlePaymentSuccess($payment, $xenditInvoice);
-                } elseif (in_array($xenditInvoice['status'], ['EXPIRED', 'FAILED'])) {
-                    $this->xenditService->handlePaymentFailed($payment, $xenditInvoice);
+                $status = null;
+                $xenditData = null;
+
+                if ($payment->payment_method === 'invoice') {
+                    $xenditData = $this->xenditService->getInvoiceStatus($payment->payment_gateway_id);
+                    $status = $xenditData['status'];
                 }
-            } catch (\Exception $e) {
+                else {
+                    // For VA, EWallet, QRIS (Payment Request)
+                    $xenditData = $this->xenditService->getPaymentRequest($payment->payment_gateway_id);
+                    $status = $xenditData['status'];
+                }
+
+                // Update status based on Xendit
+                if (in_array($status, ['PAID', 'SUCCEEDED'])) {
+                    // For PaymentRequest, structure is different, handlePaymentSuccess handles mapping?
+                    // Verify handlePaymentSuccess logic.
+                    $this->xenditService->handlePaymentSuccess($payment, $xenditData);
+                }
+                elseif (in_array($status, ['EXPIRED', 'FAILED'])) {
+                    $this->xenditService->handlePaymentFailed($payment, $xenditData);
+                }
+            }
+            catch (\Exception $e) {
                 // Log error but don't fail the request
                 \Log::error('Failed to sync payment status from Xendit: ' . $e->getMessage());
             }
@@ -144,14 +163,14 @@ class PaymentController extends Controller
     public function history(Request $request)
     {
         $payments = Payment::where('household_id', $request->user()->household_id)
-                          ->with(['subscription.plan', 'user'])
-                          ->orderBy('created_at', 'desc')
-                          ->paginate(20);
+            ->with(['subscription.plan', 'user'])
+            ->orderBy('created_at', 'desc')
+            ->paginate(20);
 
         return response()->json([
             'payments' => $payments->through(function ($payment) {
-                return $this->formatPaymentResponse($payment);
-            }),
+            return $this->formatPaymentResponse($payment);
+        }),
         ]);
     }
 

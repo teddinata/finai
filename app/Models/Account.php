@@ -7,8 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
 class Account extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'household_id',
         'name',
@@ -45,12 +48,12 @@ class Account extends Model
 
     public function transfersFrom(): HasMany
     {
-        return $this->hasMany(Transfer::class, 'from_account_id');
+        return $this->hasMany(Transfer::class , 'from_account_id');
     }
 
     public function transfersTo(): HasMany
     {
-        return $this->hasMany(Transfer::class, 'to_account_id');
+        return $this->hasMany(Transfer::class , 'to_account_id');
     }
 
     // Scopes
@@ -72,25 +75,25 @@ class Account extends Model
     // Helpers
     public function getFormattedBalance(): string
     {
-        return 'Rp ' . number_format($this->current_balance , 0, ',', '.');
+        return 'Rp ' . number_format($this->current_balance, 0, ',', '.');
     }
 
     public function getFormattedInitialBalance(): string
     {
-        return 'Rp ' . number_format($this->initial_balance , 0, ',', '.');
+        return 'Rp ' . number_format($this->initial_balance, 0, ',', '.');
     }
 
     public function getTypeLabel(): string
     {
-        return match($this->type) {
-            'bank' => 'Bank Account',
-            'cash' => 'Cash',
-            'ewallet' => 'E-Wallet',
-            'credit_card' => 'Credit Card',
-            'investment' => 'Investment',
-            'savings' => 'Savings',
-            default => 'Other',
-        };
+        return match ($this->type) {
+                'bank' => 'Bank Account',
+                'cash' => 'Cash',
+                'ewallet' => 'E-Wallet',
+                'credit_card' => 'Credit Card',
+                'investment' => 'Investment',
+                'savings' => 'Savings',
+                default => 'Other',
+            };
     }
 
     /**

@@ -6,11 +6,14 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
 class Category extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'household_id',
-        'type',  // ← Add this
+        'type', // ← Add this
         'name',
         'icon',
         'color',
@@ -62,7 +65,7 @@ class Category extends Model
         if ($type === 'both') {
             return $query;
         }
-        return $query->where(function($q) use ($type) {
+        return $query->where(function ($q) use ($type) {
             $q->where('type', $type)->orWhere('type', 'both');
         });
     }
@@ -84,9 +87,9 @@ class Category extends Model
 
     public function scopeForHousehold($query, int $householdId)
     {
-        return $query->where(function($q) use ($householdId) {
+        return $query->where(function ($q) use ($householdId) {
             $q->whereNull('household_id')
-              ->orWhere('household_id', $householdId);
+                ->orWhere('household_id', $householdId);
         });
     }
 
@@ -114,8 +117,8 @@ class Category extends Model
     public static function getAvailableForHousehold(int $householdId)
     {
         return static::forHousehold($householdId)
-                    ->ordered()
-                    ->get();
+            ->ordered()
+            ->get();
     }
 
     public function getTotalTransactions(): int

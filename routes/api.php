@@ -172,6 +172,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/scan', [TransactionController::class , 'scan'])
                 ->middleware(['check.feature:ai_scan', 'check.feature:transaction']);
 
+            // AI Chat
+            Route::post('/chat', [TransactionController::class , 'chat'])
+                ->middleware('check.feature:transaction');
+
             Route::put('/{transaction}', [TransactionController::class , 'update']);
             Route::delete('/{transaction}', [TransactionController::class , 'destroy']);
         }

@@ -29,20 +29,20 @@ class CheckFeatureLimit
 
         if (!$subscription || !$subscription->isActive()) {
             return response()->json([
-                'message' => 'Active subscription required',
+                'message' => 'Akses terbatas. Silakan berlangganan untuk menggunakan fitur ini.',
             ], 402);
         }
 
         $plan = $subscription->plan;
-        
+
         // FIX: Proper feature key mapping
-        $featureKey = match($feature) {
-            'transaction' => 'max_transactions_per_month',
-            'ai_scan' => 'max_ai_scans_per_month',
-            'storage' => 'storage_mb',
-            default => "max_{$feature}s_per_month",
-        };
-        
+        $featureKey = match ($feature) {
+                'transaction' => 'max_transactions_per_month',
+                'ai_scan' => 'max_ai_scans_per_month',
+                'storage' => 'storage_mb',
+                default => "max_{$feature}s_per_month",
+            };
+
         $limit = $plan->getFeature($featureKey, 0);
 
         // Unlimited (-1)
