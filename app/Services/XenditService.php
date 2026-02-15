@@ -117,7 +117,6 @@ class XenditService
 
         $referenceId = 'VA-' . $payment->id;
 
-        // Get user from payment
         $user = $payment->user;
         if (!$user) {
             throw new \Exception("Payment has no associated user");
@@ -139,7 +138,7 @@ class XenditService
 
         $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
             'reference_id' => $referenceId,
-            'amount' => $payment->total, // ✅ Langsung total (IDR)
+            'amount' => $payment->total,
             'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
             'payment_method' => $paymentMethodParams
         ]);
@@ -151,9 +150,18 @@ class XenditService
             throw $e;
         }
 
+        // ✅ Extract semua data penting dari response
         $vaNumber = $result['payment_method']['virtual_account']['channel_properties']['virtual_account_number'] ?? null;
-        $vaId = $result['id'];
+        $vaId = $result['id'];  // pr-xxx (Payment Request ID)
+        $paymentMethodId = $result['payment_method']['id'] ?? null;  // ✅ pm-xxx (Payment Method ID)
         $expiryDate = $result['payment_method']['virtual_account']['channel_properties']['expires_at'] ?? null;
+
+        Log::info('Xendit VA Created', [
+            'payment_id' => $payment->id,
+            'va_id' => $vaId,
+            'payment_method_id' => $paymentMethodId,
+            'va_number' => $vaNumber,
+        ]);
 
         $payment->update([
             'payment_gateway_id' => $vaId,
@@ -162,6 +170,7 @@ class XenditService
                 'va_number' => $vaNumber,
                 'bank_code' => $bankCode,
                 'va_id' => $vaId,
+                'payment_method_id' => $paymentMethodId,  // ✅ TAMBAHKAN INI
                 'payment_method' => 'virtual_account',
                 'expected_amount' => $payment->total,
                 'reference_id' => $referenceId,
@@ -172,6 +181,7 @@ class XenditService
             'va_id' => $vaId,
             'va_number' => $vaNumber,
             'bank_code' => $bankCode,
+            'payment_method_id' => $paymentMethodId,  // ✅ RETURN JUGA
             'expected_amount' => $payment->total,
             'expiration_date' => $expiryDate,
         ];
@@ -209,7 +219,7 @@ class XenditService
 
         $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
             'reference_id' => $referenceId,
-            'amount' => $payment->total, // ✅ Langsung total (IDR)
+            'amount' => $payment->total,
             'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
             'payment_method' => $paymentMethodParams
         ]);
@@ -231,6 +241,8 @@ class XenditService
             }
         }
 
+        $paymentMethodId = $result['payment_method']['id'] ?? null;  // ✅ Extract pm-xxx
+
         $payment->update([
             'payment_gateway_id' => $result['id'],
             'payment_token' => $referenceId,
@@ -238,6 +250,7 @@ class XenditService
             'metadata' => array_merge($payment->metadata ?? [], [
                 'ewallet_type' => $ewalletType,
                 'checkout_url' => $checkoutUrl,
+                'payment_method_id' => $paymentMethodId,  // ✅ TAMBAHKAN
                 'payment_method' => 'ewallet',
                 'reference_id' => $referenceId,
             ]),
@@ -246,6 +259,7 @@ class XenditService
         return [
             'charge_id' => $result['id'],
             'checkout_url' => $checkoutUrl,
+            'payment_method_id' => $paymentMethodId,  // ✅ RETURN
         ];
     }
 
@@ -272,7 +286,7 @@ class XenditService
 
         $paymentRequestParams = new \Xendit\PaymentRequest\PaymentRequestParameters([
             'reference_id' => $referenceId,
-            'amount' => $payment->total, // ✅ Langsung total (IDR)
+            'amount' => $payment->total,
             'currency' => \Xendit\PaymentRequest\PaymentRequestCurrency::IDR,
             'payment_method' => $paymentMethodParams
         ]);
@@ -285,6 +299,7 @@ class XenditService
         }
 
         $qrString = $result['payment_method']['qr_code']['channel_properties']['qr_string'] ?? null;
+        $paymentMethodId = $result['payment_method']['id'] ?? null;  // ✅ Extract pm-xxx
 
         $payment->update([
             'payment_gateway_id' => $result['id'],
@@ -293,6 +308,7 @@ class XenditService
             'metadata' => array_merge($payment->metadata ?? [], [
                 'qris_id' => $result['id'],
                 'qr_string' => $qrString,
+                'payment_method_id' => $paymentMethodId,  // ✅ TAMBAHKAN
                 'payment_method' => 'qris',
                 'reference_id' => $referenceId,
             ]),
@@ -301,6 +317,7 @@ class XenditService
         return [
             'qris_id' => $result['id'],
             'qr_string' => $qrString,
+            'payment_method_id' => $paymentMethodId,  // ✅ RETURN
         ];
     }
 
