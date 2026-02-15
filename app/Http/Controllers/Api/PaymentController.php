@@ -7,6 +7,9 @@ use App\Models\Payment;
 use App\Models\Subscription;
 use App\Services\XenditService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PaymentController extends Controller
 {
@@ -18,92 +21,74 @@ class PaymentController extends Controller
     }
 
     /**
-     * Create payment for subscription
+     * Create payment
      */
     public function create(Request $request)
     {
-        $validated = $request->validate([
+        $request->validate([
             'subscription_id' => 'required|exists:subscriptions,id',
             'payment_method' => 'required|in:invoice,virtual_account,ewallet,qris',
             'bank_code' => 'required_if:payment_method,virtual_account|in:BNI,BRI,MANDIRI,PERMATA,BCA',
             'ewallet_type' => 'required_if:payment_method,ewallet|in:OVO,DANA,LINKAJA,SHOPEEPAY',
         ]);
 
-        $user = $request->user();
-        $subscription = Subscription::with('plan', 'household')->findOrFail($validated['subscription_id']);
-
-        // Check authorization
-        if ($subscription->household_id !== $user->household_id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        if (!$user->isOwner() && !$user->isBillingOwner()) {
-            return response()->json(['message' => 'Only owner or billing owner can make payments'], 403);
-        }
-
-        // Check if there's pending payment
-        $existingPayment = Payment::where('subscription_id', $subscription->id)
-            ->where('status', 'pending')
-            ->first();
-
-        if ($existingPayment) {
-            // Auto-expire old pending payment to allow new attempt
-            $existingPayment->update(['status' => 'expired']);
-
-            \Log::info('Expired old pending payment to create new one', [
-                'old_payment_id' => $existingPayment->id,
-                'user_id' => $user->id
-            ]);
-        }
-
-        // Create payment record
-        $payment = Payment::create([
-            'subscription_id' => $subscription->id,
-            'household_id' => $subscription->household_id,
-            'user_id' => $user->id,
-            'amount' => $subscription->plan->price,
-            'tax' => 0, // Calculate if needed
-            'total' => $subscription->plan->price,
-            'currency' => $subscription->plan->currency,
-            'payment_method' => 'xendit',
-            'status' => 'pending',
-        ]);
-
         try {
-            $result = null;
+            DB::beginTransaction();
 
-            switch ($validated['payment_method']) {
-                case 'invoice':
-                    $result = $this->xenditService->createInvoice($payment, [
-                        'name' => $user->name,
-                        'email' => $user->email,
-                    ]);
-                    break;
+            $subscription = Subscription::findOrFail($request->subscription_id);
+            $user = Auth::user();
+            $household = $user->household;
 
-                case 'virtual_account':
-                    $result = $this->xenditService->createVirtualAccount($payment, $validated['bank_code']);
-                    break;
-
-                case 'ewallet':
-                    $result = $this->xenditService->createEWalletCharge($payment, $validated['ewallet_type']);
-                    break;
-
-                case 'qris':
-                    // Implement QRIS if needed
-                    return response()->json(['message' => 'QRIS not implemented yet'], 501);
+            // Validate subscription belongs to user's household
+            if ($subscription->household_id !== $household->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized access to subscription',
+                ], 403);
             }
 
+            // Create payment record
+            $payment = Payment::create([
+                'subscription_id' => $subscription->id,
+                'household_id' => $household->id,
+                'user_id' => $user->id,
+                'amount' => $subscription->plan->price,
+                'tax' => 0,
+                'total' => $subscription->plan->price,
+                'currency' => 'IDR',
+                'payment_method' => $request->payment_method,
+                'status' => 'pending',
+            ]);
+
+            // Route to appropriate payment method
+            $result = match ($request->payment_method) {
+                'invoice' => $this->createInvoicePayment($payment, $user),
+                'virtual_account' => $this->createVAPayment($payment, $request->bank_code),
+                'ewallet' => $this->createEWalletPayment($payment, $request->ewallet_type),
+                'qris' => $this->createQRISPayment($payment),
+                default => throw new \Exception('Invalid payment method'),
+            };
+
+            DB::commit();
+
             return response()->json([
+                'success' => true,
                 'message' => 'Payment created successfully',
-                'payment' => $this->formatPaymentResponse($payment->fresh()),
-                'payment_data' => $result,
-            ], 201);
+                'data' => [
+                    'payment' => $payment->fresh(),
+                    'payment_details' => $result,
+                ],
+            ]);
 
-        }
-        catch (\Exception $e) {
-            $payment->delete();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Payment creation failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
             return response()->json([
+                'success' => false,
                 'message' => 'Failed to create payment',
                 'error' => $e->getMessage(),
             ], 500);
@@ -111,50 +96,38 @@ class PaymentController extends Controller
     }
 
     /**
-     * Get payment status
+     * Create Invoice Payment
      */
-    public function status(Request $request, Payment $payment)
+    protected function createInvoicePayment(Payment $payment, $user)
     {
-        // Check authorization
-        if ($payment->household_id !== $request->user()->household_id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        // Refresh from Xendit
-        if ($payment->payment_gateway_id && $payment->isPending()) {
-            try {
-                $status = null;
-                $xenditData = null;
-
-                if ($payment->payment_method === 'invoice') {
-                    $xenditData = $this->xenditService->getInvoiceStatus($payment->payment_gateway_id);
-                    $status = $xenditData['status'];
-                }
-                else {
-                    // For VA, EWallet, QRIS (Payment Request)
-                    $xenditData = $this->xenditService->getPaymentRequest($payment->payment_gateway_id);
-                    $status = $xenditData['status'];
-                }
-
-                // Update status based on Xendit
-                if (in_array($status, ['PAID', 'SUCCEEDED'])) {
-                    // For PaymentRequest, structure is different, handlePaymentSuccess handles mapping?
-                    // Verify handlePaymentSuccess logic.
-                    $this->xenditService->handlePaymentSuccess($payment, $xenditData);
-                }
-                elseif (in_array($status, ['EXPIRED', 'FAILED'])) {
-                    $this->xenditService->handlePaymentFailed($payment, $xenditData);
-                }
-            }
-            catch (\Exception $e) {
-                // Log error but don't fail the request
-                \Log::error('Failed to sync payment status from Xendit: ' . $e->getMessage());
-            }
-        }
-
-        return response()->json([
-            'payment' => $this->formatPaymentResponse($payment->fresh()),
+        return $this->xenditService->createInvoice($payment, [
+            'name' => $user->name,
+            'email' => $user->email,
         ]);
+    }
+
+    /**
+     * Create Virtual Account Payment
+     */
+    protected function createVAPayment(Payment $payment, string $bankCode)
+    {
+        return $this->xenditService->createVirtualAccount($payment, $bankCode);
+    }
+
+    /**
+     * Create E-Wallet Payment
+     */
+    protected function createEWalletPayment(Payment $payment, string $ewalletType)
+    {
+        return $this->xenditService->createEWalletCharge($payment, $ewalletType);
+    }
+
+    /**
+     * Create QRIS Payment
+     */
+    protected function createQRISPayment(Payment $payment)
+    {
+        return $this->xenditService->createQRIS($payment);
     }
 
     /**
@@ -162,62 +135,104 @@ class PaymentController extends Controller
      */
     public function history(Request $request)
     {
-        $payments = Payment::where('household_id', $request->user()->household_id)
+        $user = Auth::user();
+        
+        $payments = Payment::where('household_id', $user->household_id)
             ->with(['subscription.plan', 'user'])
             ->orderBy('created_at', 'desc')
             ->paginate(20);
 
         return response()->json([
-            'payments' => $payments->through(function ($payment) {
-            return $this->formatPaymentResponse($payment);
-        }),
+            'success' => true,
+            'data' => $payments,
         ]);
     }
 
     /**
-     * Cancel pending payment
+     * Get payment status
      */
-    public function cancel(Request $request, Payment $payment)
+    public function status(Payment $payment)
     {
-        // Check authorization
-        if ($payment->household_id !== $request->user()->household_id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $user = Auth::user();
 
-        if (!$payment->isPending()) {
-            return response()->json(['message' => 'Only pending payments can be canceled'], 400);
+        if ($payment->household_id !== $user->household_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 403);
         }
-
-        $payment->update(['status' => 'expired']);
 
         return response()->json([
-            'message' => 'Payment canceled successfully',
+            'success' => true,
+            'payment' => $payment->load(['subscription.plan']),
         ]);
     }
 
     /**
-     * Format payment response
+     * Get payment by token (untuk redirect page)
      */
-    private function formatPaymentResponse(Payment $payment)
+    public function getByToken(Request $request)
     {
-        return [
-            'id' => $payment->id,
-            'amount' => $payment->amount,
-            'tax' => $payment->tax,
-            'total' => $payment->total,
-            'formatted_total' => $payment->getFormattedTotal(),
-            'currency' => $payment->currency,
-            'status' => $payment->status,
-            'payment_method' => $payment->payment_method,
-            'payment_url' => $payment->snap_token,
-            'va_number' => $payment->metadata['va_number'] ?? null,
-            'bank_code' => $payment->metadata['bank_code'] ?? null,
-            'created_at' => $payment->created_at,
-            'paid_at' => $payment->paid_at,
-            'subscription' => $payment->subscription ? [
-                'id' => $payment->subscription->id,
-                'plan_name' => $payment->subscription->plan->name,
-            ] : null,
-        ];
+        $externalId = $request->query('external_id');
+        $referenceId = $request->query('reference_id');
+        
+        $payment = null;
+        
+        if ($externalId) {
+            $payment = Payment::where('payment_token', $externalId)
+                ->with(['subscription.plan', 'household'])
+                ->first();
+        } elseif ($referenceId) {
+            $payment = Payment::where('payment_token', $referenceId)
+                ->with(['subscription.plan', 'household'])
+                ->first();
+        }
+        
+        if (!$payment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment not found',
+            ], 404);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $payment,
+        ]);
+    }
+
+    /**
+     * Cancel payment
+     */
+    public function cancel(Payment $payment)
+    {
+        $user = Auth::user();
+
+        if ($payment->household_id !== $user->household_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
+
+        if ($payment->status !== 'pending') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only pending payments can be cancelled',
+            ], 400);
+        }
+
+        $payment->update([
+            'status' => 'expired',
+            'metadata' => array_merge($payment->metadata ?? [], [
+                'cancelled_by' => 'user',
+                'cancelled_at' => now()->toIso8601String(),
+            ]),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Payment cancelled',
+        ]);
     }
 }

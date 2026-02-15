@@ -65,7 +65,7 @@ class PlanSeeder extends Seeder
                 'sort_order' => 2,
                 'features' => [
                     // PRICING VARIATIONS
-                    'price_monthly' => 10000, // Rp 10.000
+                    'price_monthly' => 100, // Rp 10.000
                     'price_yearly' => 49000,  // Rp 49.000 (save 51rb)
                     
                     // USER & ACCESS
@@ -113,7 +113,7 @@ class PlanSeeder extends Seeder
                 'sort_order' => 3,
                 'features' => [
                     // PRICING VARIATIONS
-                    'price_monthly' => 19000, // Rp 19.000
+                    'price_monthly' => 900, // Rp 19.000
                     'price_yearly' => 99000,  // Rp 99.000 (save 129rb)
                     
                     // USER & ACCESS

@@ -334,6 +334,12 @@ class XenditService
      */
     public function handlePaymentSuccess(Payment $payment, $xenditData)
     {
+        Log::info('=== handlePaymentSuccess START ===', [
+            'payment_id' => $payment->id,
+            'current_status' => $payment->status,
+            'xendit_data' => $xenditData,
+        ]);
+
         // Convert object to array if needed
         if (is_object($xenditData) && method_exists($xenditData, 'toArray')) {
             $xenditData = $xenditData->toArray();
@@ -350,20 +356,34 @@ class XenditService
         // Data Mapping
         $paidVia = $xenditData['payment_channel'] ?? $xenditData['payment_method']['type'] ?? 'unknown';
         $paidAmount = $xenditData['paid_amount'] ?? $xenditData['amount'] ?? $payment->total;
-        
-        // ✅ HAPUS konversi cents, langsung pakai amount
+
+        Log::info('Marking payment as paid', [
+            'payment_id' => $payment->id,
+            'paid_via' => $paidVia,
+            'paid_amount' => $paidAmount,
+        ]);
 
         $payment->markAsPaid($xenditData['id'], [
             'paid_via' => $paidVia,
-            'paid_amount' => $paidAmount, // ✅ Langsung IDR
+            'paid_amount' => $paidAmount,
             'xendit_fee' => $xenditData['xendit_fee'] ?? 0,
             'payment_id' => $xenditData['payment_id'] ?? null,
             'webhook_received_at' => now()->toIso8601String(),
         ]);
 
+        Log::info('Payment marked as paid', [
+            'payment_id' => $payment->id,
+            'new_status' => $payment->fresh()->status,
+        ]);
+
         // Activate subscription
         if ($payment->subscription) {
             $subscription = $payment->subscription;
+
+            Log::info('Activating subscription', [
+                'subscription_id' => $subscription->id,
+                'plan' => $subscription->plan->name,
+            ]);
 
             // Calculate expiry based on plan type
             $expiresAt = match ($subscription->plan->type) {
@@ -393,6 +413,11 @@ class XenditService
 
         // Create invoice
         $this->createOrUpdateInvoice($payment);
+
+        Log::info('=== handlePaymentSuccess END ===', [
+            'payment_id' => $payment->id,
+            'final_status' => $payment->fresh()->status,
+        ]);
 
         return true;
     }

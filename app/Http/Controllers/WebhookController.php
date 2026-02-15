@@ -481,20 +481,35 @@ class WebhookController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /**
-     * Handle Xendit V2 unified Payment Request webhook
-     */
     protected function handlePaymentRequestWebhook(array $data)
     {
+        // ✅ TAMBAHKAN: Log detail lengkap
+        Log::info('=== PAYMENT REQUEST WEBHOOK DETAILS ===', [
+            'full_data' => $data,
+            'id' => $data['id'] ?? null,
+            'reference_id' => $data['reference_id'] ?? null,
+            'status' => $data['status'] ?? null,
+            'amount' => $data['amount'] ?? null,
+        ]);
+
         $payment = $this->findPayment($data);
 
         if (!$payment) {
             Log::warning('Payment not found for payment request webhook', [
                 'reference_id' => $data['reference_id'] ?? null,
                 'id' => $data['id'] ?? null,
+                'all_payments' => Payment::select('id', 'payment_token', 'payment_gateway_id')->get()->toArray(),
             ]);
             return response()->json(['success' => true, 'message' => 'Payment not found, skipped']);
         }
+
+        // ✅ TAMBAHKAN: Log payment yang ditemukan
+        Log::info('Payment found!', [
+            'payment_id' => $payment->id,
+            'payment_token' => $payment->payment_token,
+            'payment_gateway_id' => $payment->payment_gateway_id,
+            'current_status' => $payment->status,
+        ]);
 
         if ($payment->isPaid()) {
             return response()->json(['success' => true, 'message' => 'Already processed']);
@@ -505,15 +520,28 @@ class WebhookController extends Controller
         Log::info('Processing payment request webhook', [
             'payment_id' => $payment->id,
             'status' => $status,
+            'will_mark_as_paid' => in_array($status, ['SUCCEEDED', 'PAID']),
         ]);
 
         switch ($status) {
             case 'SUCCEEDED':
             case 'PAID':
+                // ✅ TAMBAHKAN: Log sebelum handlePaymentSuccess
+                Log::info('Calling handlePaymentSuccess', [
+                    'payment_id' => $payment->id,
+                    'data' => $data,
+                ]);
+                
                 $this->xenditService->handlePaymentSuccess($payment, [
                     'id' => $data['id'] ?? null,
                     'payment_channel' => $data['payment_method']['type'] ?? 'unknown',
                     'paid_amount' => $data['amount'] ?? $payment->total,
+                ]);
+                
+                // ✅ TAMBAHKAN: Log setelah handlePaymentSuccess
+                Log::info('handlePaymentSuccess completed', [
+                    'payment_id' => $payment->id,
+                    'new_status' => $payment->fresh()->status,
                 ]);
                 break;
 
