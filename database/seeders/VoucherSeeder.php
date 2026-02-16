@@ -16,7 +16,7 @@ class VoucherSeeder extends Seeder
         $vouchers = [
             [
                 'code' => 'BENAHLAUNCH',
-                'name' => 'Grand Opening',
+                'name' => 'Grand Launching Benah AI Your Financial Advisor',
                 'type' => 'percentage',
                 'value' => 50,
                 'max_uses' => 20,
@@ -27,7 +27,7 @@ class VoucherSeeder extends Seeder
             ],
             [
                 'code' => 'VVIP99',
-                'name' => 'Very Special Discount',
+                'name' => 'Super Very Special Discount for Early Customer Benah AI',
                 'type' => 'percentage',
                 'value' => 99,
                 'max_uses' => 10,
@@ -38,7 +38,7 @@ class VoucherSeeder extends Seeder
             ],
             [
                 'code' => 'VVIP90',
-                'name' => 'Very Special Discount',
+                'name' => 'Very Special Discount for Early Customer Benah AI',
                 'type' => 'percentage',
                 'value' => 90,
                 'max_uses' => 1,
@@ -49,7 +49,7 @@ class VoucherSeeder extends Seeder
             ],
             [
                 'code' => 'VIP80',
-                'name' => 'Special Discount',
+                'name' => 'Special Discount for Early Customer Benah AI',
                 'type' => 'percentage',
                 'value' => 80,
                 'max_uses' => 2,
