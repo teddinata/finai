@@ -30,7 +30,7 @@ class SubscriptionController extends Controller
                                 ->with('plan')
                                 ->first();
 
-        // ✅ Jika tidak ada subscription, return free plan
+        // Jika tidak ada subscription, return free plan
         if (!$subscription) {
             $freePlan = Plan::where('slug', 'premium-free')->first();
             
@@ -47,9 +47,7 @@ class SubscriptionController extends Controller
             ]);
         }
 
-        // ✅ FIX: If subscription is already active, auto-expire any orphaned pending payments
-        // This handles the case where webhook activated the subscription but the initial
-        // "placeholder" payment record (created during subscribe()) was never updated.
+        // ✅ FIX: If subscription is already active, auto-expire orphaned pending payments
         $pendingPayment = null;
 
         if ($subscription->status === 'active') {
@@ -73,11 +71,8 @@ class SubscriptionController extends Controller
                     'count' => $orphanedCount,
                 ]);
             }
-
-            // No pending payment to show — subscription is active
-            $pendingPayment = null;
         } else {
-            // ✅ Only show pending payment for the CURRENT subscription
+            // Only show pending payment for the CURRENT subscription
             $pendingPayment = Payment::where('household_id', $household->id)
                 ->where('subscription_id', $subscription->id)
                 ->where('status', 'pending')
@@ -95,6 +90,7 @@ class SubscriptionController extends Controller
                     'type' => $subscription->plan->type,
                     'features' => $subscription->plan->features,
                 ],
+                'billing_cycle' => $subscription->billing_cycle,
                 'status' => $subscription->status,
                 'started_at' => $subscription->started_at,
                 'expires_at' => $subscription->expires_at,
@@ -129,9 +125,20 @@ class SubscriptionController extends Controller
             ], 403);
         }
 
+        // ✅ FIX: Accept billing_cycle from frontend
+        $billingCycle = $request->input('billing_cycle', 'monthly');
+        
+        // Validate billing cycle
+        if (!in_array($billingCycle, ['monthly', 'yearly'])) {
+            $billingCycle = 'monthly';
+        }
+
+        // ✅ FIX: Calculate correct price based on billing cycle
+        $price = $this->calculatePrice($plan, $billingCycle);
+
         DB::beginTransaction();
         try {
-            // ✅ AUTO-CANCEL all old pending payments for this household
+            // Auto-cancel all old pending payments
             Payment::where('household_id', $household->id)
                 ->where('status', 'pending')
                 ->update([
@@ -144,18 +151,27 @@ class SubscriptionController extends Controller
                 $household->currentSubscription->cancel('Upgraded/downgraded plan');
             }
 
-            // Calculate expiry
-            $expiresAt = match($plan->type) {
-                'monthly' => now()->addMonth(),
+            // ✅ FIX: Calculate expiry based on billing_cycle, not plan->type
+            $expiresAt = match($billingCycle) {
                 'yearly' => now()->addYear(),
-                'lifetime' => null,
-                'free' => null,
+                'monthly' => now()->addMonth(),
+                default => $plan->type === 'lifetime' ? null : ($plan->type === 'free' ? null : now()->addMonth()),
             };
+
+            // For free/lifetime plans, override
+            if ($plan->isFree()) {
+                $billingCycle = 'free';
+                $expiresAt = null;
+            } elseif ($plan->type === 'lifetime') {
+                $billingCycle = 'lifetime';
+                $expiresAt = null;
+            }
 
             // Create new subscription
             $subscription = Subscription::create([
                 'household_id' => $household->id,
                 'plan_id' => $plan->id,
+                'billing_cycle' => $billingCycle,
                 'status' => $plan->isFree() ? 'active' : 'pending',
                 'started_at' => now(),
                 'expires_at' => $expiresAt,
@@ -165,17 +181,17 @@ class SubscriptionController extends Controller
             // Update household
             $household->update(['current_subscription_id' => $subscription->id]);
 
-            // If not free, create payment
+            // If not free, create payment with CORRECT price
             if (!$plan->isFree()) {
                 $payment = Payment::create([
                     'subscription_id' => $subscription->id,
                     'household_id' => $household->id,
                     'user_id' => $user->id,
-                    'amount' => $plan->price,
+                    'amount' => $price,
                     'tax' => 0,
-                    'total' => $plan->price,
+                    'total' => $price,
                     'currency' => $plan->currency,
-                    'payment_method' => 'pending', // Will be set when user chooses method
+                    'payment_method' => 'pending',
                     'status' => 'pending',
                 ]);
 
@@ -190,6 +206,7 @@ class SubscriptionController extends Controller
                         'amount' => $payment->total,
                         'formatted_amount' => 'Rp ' . number_format($payment->total, 0, ',', '.'),
                         'status' => $payment->status,
+                        'billing_cycle' => $billingCycle,
                     ],
                     'next_step' => 'choose_payment_method',
                 ], 201);
@@ -220,6 +237,29 @@ class SubscriptionController extends Controller
     }
 
     /**
+     * ✅ NEW: Calculate correct price based on billing cycle
+     */
+    protected function calculatePrice(Plan $plan, string $billingCycle): int
+    {
+        if ($plan->isFree()) {
+            return 0;
+        }
+
+        $features = $plan->features ?? [];
+
+        if ($billingCycle === 'yearly' && isset($features['price_yearly'])) {
+            return (int) $features['price_yearly'];
+        }
+
+        if ($billingCycle === 'monthly' && isset($features['price_monthly'])) {
+            return (int) $features['price_monthly'];
+        }
+
+        // Fallback to base price
+        return (int) $plan->price;
+    }
+
+    /**
      * Cancel subscription
      */
     public function cancel(Request $request)
@@ -245,7 +285,6 @@ class SubscriptionController extends Controller
             ], 404);
         }
 
-        // Don't allow canceling free plan
         if ($subscription->plan->isFree()) {
             return response()->json([
                 'message' => 'Cannot cancel free plan',

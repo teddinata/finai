@@ -12,6 +12,7 @@ class Subscription extends Model
         'household_id',
         'plan_id',
         'status',
+        'billing_cycle',
         'started_at',
         'expires_at',
         'canceled_at',
@@ -134,12 +135,12 @@ class Subscription extends Model
             return false;
         }
 
-        // Logic for renewal based on plan type
-        $expiresAt = match($this->plan->type) {
-            'monthly' => now()->addMonth(),
+        // ✅ FIX: Use billing_cycle instead of plan->type for renewal
+        $expiresAt = match($this->billing_cycle) {
             'yearly' => now()->addYear(),
+            'monthly' => now()->addMonth(),
             'lifetime' => null,
-            default => $this->expires_at,
+            default => now()->addMonth(),
         };
 
         $this->update([
