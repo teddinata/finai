@@ -17,7 +17,7 @@ class SubscriptionController extends Controller
     public function current(Request $request)
     {
         $household = $request->user()->household;
-        
+
         if (!$household) {
             return response()->json([
                 'success' => false,
@@ -26,14 +26,14 @@ class SubscriptionController extends Controller
         }
 
         $subscription = $household->currentSubscription()
-                                ->with('plan')
-                                ->first();
+            ->with('plan')
+            ->first();
 
         // ✅ FIXED: Jika tidak ada subscription, return free plan
         if (!$subscription) {
             // Get free plan
             $freePlan = \App\Models\Plan::where('slug', 'premium-free')->first();
-            
+
             return response()->json([
                 'success' => true,
                 'subscription' => null,
@@ -47,8 +47,12 @@ class SubscriptionController extends Controller
             ]);
         }
 
-        // ✅ Check pending payment
+        // ✅ FIX: Only check pending payments for the CURRENT subscription
+        // Previously this queried ALL pending payments for the household,
+        // which caused old pending payments from previous subscriptions to show up
+        // even when the current subscription is already active and paid.
         $pendingPayment = Payment::where('household_id', $household->id)
+            ->where('subscription_id', $subscription->id)
             ->where('status', 'pending')
             ->latest()
             ->first();
@@ -104,9 +108,9 @@ class SubscriptionController extends Controller
             Payment::where('household_id', $household->id)
                 ->where('status', 'pending')
                 ->update([
-                    'status' => 'expired',
-                    'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_canceled', true, '$.reason', 'New subscription created')")
-                ]);
+                'status' => 'expired',
+                'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_canceled', true, '$.reason', 'New subscription created')")
+            ]);
 
             // ✅ Cancel current subscription if exists
             if ($household->currentSubscription) {
@@ -114,12 +118,12 @@ class SubscriptionController extends Controller
             }
 
             // Calculate expiry
-            $expiresAt = match($plan->type) {
-                'monthly' => now()->addMonth(),
-                'yearly' => now()->addYear(),
-                'lifetime' => null,
-                'free' => null,
-            };
+            $expiresAt = match ($plan->type) {
+                    'monthly' => now()->addMonth(),
+                    'yearly' => now()->addYear(),
+                    'lifetime' => null,
+                    'free' => null,
+                };
 
             // Create new subscription
             $subscription = Subscription::create([
@@ -172,14 +176,15 @@ class SubscriptionController extends Controller
                 'subscription' => $subscription->load('plan'),
             ], 201);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             DB::rollBack();
-            
+
             Log::error('Subscription failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Subscription failed',
