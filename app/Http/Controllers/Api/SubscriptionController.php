@@ -8,6 +8,7 @@ use App\Models\Subscription;
 use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class SubscriptionController extends Controller
 {
@@ -17,7 +18,7 @@ class SubscriptionController extends Controller
     public function current(Request $request)
     {
         $household = $request->user()->household;
-
+        
         if (!$household) {
             return response()->json([
                 'success' => false,
@@ -26,14 +27,13 @@ class SubscriptionController extends Controller
         }
 
         $subscription = $household->currentSubscription()
-            ->with('plan')
-            ->first();
+                                ->with('plan')
+                                ->first();
 
-        // ✅ FIXED: Jika tidak ada subscription, return free plan
+        // ✅ Jika tidak ada subscription, return free plan
         if (!$subscription) {
-            // Get free plan
-            $freePlan = \App\Models\Plan::where('slug', 'premium-free')->first();
-
+            $freePlan = Plan::where('slug', 'premium-free')->first();
+            
             return response()->json([
                 'success' => true,
                 'subscription' => null,
@@ -47,17 +47,44 @@ class SubscriptionController extends Controller
             ]);
         }
 
-        // ✅ FIX: Only check pending payments for the CURRENT subscription
-        // Previously this queried ALL pending payments for the household,
-        // which caused old pending payments from previous subscriptions to show up
-        // even when the current subscription is already active and paid.
-        $pendingPayment = Payment::where('household_id', $household->id)
-            ->where('subscription_id', $subscription->id)
-            ->where('status', 'pending')
-            ->latest()
-            ->first();
+        // ✅ FIX: If subscription is already active, auto-expire any orphaned pending payments
+        // This handles the case where webhook activated the subscription but the initial
+        // "placeholder" payment record (created during subscribe()) was never updated.
+        $pendingPayment = null;
 
-        // ✅ FIXED: Return data even if canceled
+        if ($subscription->status === 'active') {
+            $orphanedCount = Payment::where('household_id', $household->id)
+                ->where('subscription_id', $subscription->id)
+                ->where('status', 'pending')
+                ->count();
+
+            if ($orphanedCount > 0) {
+                Payment::where('household_id', $household->id)
+                    ->where('subscription_id', $subscription->id)
+                    ->where('status', 'pending')
+                    ->update([
+                        'status' => 'expired',
+                        'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_expired', true, '$.reason', 'Subscription already active')")
+                    ]);
+
+                Log::info('Auto-expired orphaned pending payments', [
+                    'household_id' => $household->id,
+                    'subscription_id' => $subscription->id,
+                    'count' => $orphanedCount,
+                ]);
+            }
+
+            // No pending payment to show — subscription is active
+            $pendingPayment = null;
+        } else {
+            // ✅ Only show pending payment for the CURRENT subscription
+            $pendingPayment = Payment::where('household_id', $household->id)
+                ->where('subscription_id', $subscription->id)
+                ->where('status', 'pending')
+                ->latest()
+                ->first();
+        }
+
         return response()->json([
             'success' => true,
             'subscription' => [
@@ -104,26 +131,26 @@ class SubscriptionController extends Controller
 
         DB::beginTransaction();
         try {
-            // ✅ AUTO-CANCEL old pending payments
+            // ✅ AUTO-CANCEL all old pending payments for this household
             Payment::where('household_id', $household->id)
                 ->where('status', 'pending')
                 ->update([
-                'status' => 'expired',
-                'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_canceled', true, '$.reason', 'New subscription created')")
-            ]);
+                    'status' => 'expired',
+                    'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_canceled', true, '$.reason', 'New subscription created')")
+                ]);
 
-            // ✅ Cancel current subscription if exists
+            // Cancel current subscription if exists
             if ($household->currentSubscription) {
                 $household->currentSubscription->cancel('Upgraded/downgraded plan');
             }
 
             // Calculate expiry
-            $expiresAt = match ($plan->type) {
-                    'monthly' => now()->addMonth(),
-                    'yearly' => now()->addYear(),
-                    'lifetime' => null,
-                    'free' => null,
-                };
+            $expiresAt = match($plan->type) {
+                'monthly' => now()->addMonth(),
+                'yearly' => now()->addYear(),
+                'lifetime' => null,
+                'free' => null,
+            };
 
             // Create new subscription
             $subscription = Subscription::create([
@@ -148,7 +175,7 @@ class SubscriptionController extends Controller
                     'tax' => 0,
                     'total' => $plan->price,
                     'currency' => $plan->currency,
-                    'payment_method' => 'pending', // ✅ Will be set when user chooses method
+                    'payment_method' => 'pending', // Will be set when user chooses method
                     'status' => 'pending',
                 ]);
 
@@ -176,15 +203,14 @@ class SubscriptionController extends Controller
                 'subscription' => $subscription->load('plan'),
             ], 201);
 
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack();
-
+            
             Log::error('Subscription failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Subscription failed',
