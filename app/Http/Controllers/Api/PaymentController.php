@@ -159,26 +159,14 @@ class PaymentController extends Controller
 
     /**
      * Get payment status
+     * 
+     * Note: Status updates are handled by Xendit webhooks.
+     * This endpoint just returns the current payment state from DB.
      */
     public function status(Request $request, Payment $payment)
     {
         if ($payment->household_id !== $request->user()->household_id) {
             return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        // Refresh from Xendit if still pending
-        if ($payment->payment_gateway_id && $payment->isPending()) {
-            try {
-                $xenditInvoice = $this->xenditService->getInvoiceStatus($payment->payment_gateway_id);
-                
-                if ($xenditInvoice['status'] === 'PAID') {
-                    $this->xenditService->handlePaymentSuccess($payment, $xenditInvoice);
-                } elseif (in_array($xenditInvoice['status'], ['EXPIRED', 'FAILED'])) {
-                    $this->xenditService->handlePaymentFailed($payment, $xenditInvoice);
-                }
-            } catch (\Exception $e) {
-                Log::error('Failed to sync payment status from Xendit: ' . $e->getMessage());
-            }
         }
 
         return response()->json([
