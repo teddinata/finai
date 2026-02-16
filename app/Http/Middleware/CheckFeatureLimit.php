@@ -21,21 +21,41 @@ class CheckFeatureLimit
 
         if (!$household) {
             return response()->json([
+                'success' => false,
                 'message' => 'No household found',
             ], 403);
         }
 
         $subscription = $household->currentSubscription;
 
-        if (!$subscription || !$subscription->isActive()) {
+        if (!$subscription) {
             return response()->json([
+                'success' => false,
                 'message' => 'Akses terbatas. Silakan berlangganan untuk menggunakan fitur ini.',
+                'action' => 'subscribe',
             ], 402);
+        }
+
+        // ✅ FIXED: Only enforce limits on active subscriptions
+        // Allow canceled/expired to view data (read-only)
+        if (!$subscription->isActive()) {
+            // Block only write operations
+            if (in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Subscription tidak aktif. Perpanjang untuk menambah data baru.',
+                    'status' => $subscription->status,
+                    'action' => $subscription->status === 'expired' ? 'renew' : 'reactivate',
+                ], 402);
+            }
+
+            // Allow GET requests (viewing data)
+            return $next($request);
         }
 
         $plan = $subscription->plan;
 
-        // FIX: Proper feature key mapping
+        // Proper feature key mapping
         $featureKey = match ($feature) {
                 'transaction' => 'max_transactions_per_month',
                 'ai_scan' => 'max_ai_scans_per_month',
@@ -55,7 +75,8 @@ class CheckFeatureLimit
 
         if ($currentUsage >= $limit) {
             return response()->json([
-                'message' => ucfirst($feature) . " limit reached",
+                'success' => false,
+                'message' => ucfirst($feature) . " limit reached for this month",
                 'current_usage' => $currentUsage,
                 'limit' => $limit,
                 'remaining' => 0,

@@ -20,30 +20,58 @@ class CheckModuleAccess
 
         if (!$household) {
             return response()->json([
+                'success' => false,
                 'message' => 'No household found',
             ], 403);
         }
 
         $subscription = $household->currentSubscription;
 
-        if (!$subscription || !$subscription->isActive()) {
+        if (!$subscription) {
             return response()->json([
+                'success' => false,
                 'message' => 'Akses terbatas. Silakan berlangganan untuk menggunakan fitur ini.',
                 'module' => $module,
+                'action' => 'subscribe',
             ], 402);
         }
 
-        // Check if plan can access this module
-        if (!$household->canAccessModule($module)) {
+        // ✅ FIXED: Only check if subscription is active
+        // Allow canceled/expired to proceed (they might be viewing old data)
+        if (!$subscription->isActive() && !in_array($subscription->status, ['canceled', 'expired'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Subscription tidak aktif. Silakan perpanjang untuk menggunakan fitur ini.',
+                'module' => $module,
+                'action' => 'renew',
+            ], 402);
+        }
+
+        // ✅ For canceled/expired: Allow read-only access
+        // Block only if trying to create/update
+        if (in_array($subscription->status, ['canceled', 'expired'])) {
+            if (in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Subscription tidak aktif. Perpanjang untuk menambah/mengubah data.',
+                    'status' => $subscription->status,
+                    'action' => $subscription->status === 'expired' ? 'renew' : 'reactivate',
+                ], 402);
+            }
+        }
+
+        // Check if plan can access this module (only for active subscriptions)
+        if ($subscription->isActive() && !$household->canAccessModule($module)) {
             $plan = $subscription->plan;
 
             return response()->json([
-                'message' => "Fitur '{$module}' tidak tersedia pada paket Anda saat ini. Silakan tingkatkan paket Anda untuk mengakses fitur ini.",
+                'success' => false,
+                'message' => "Fitur '{$module}' tidak tersedia pada paket Anda saat ini.",
                 'current_plan' => $plan->name,
                 'required_plans' => $this->getRequiredPlans($module),
                 'upgrade_message' => $household->getUpgradeSuggestion(),
                 'action' => 'upgrade_plan',
-            ], 403); // Forbidden
+            ], 403);
         }
 
         return $next($request);

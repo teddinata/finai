@@ -17,40 +17,36 @@ class CheckSubscription
 
         if (!$user) {
             return response()->json([
+                'success' => false,
                 'message' => 'Unauthenticated',
             ], 401);
         }
 
         if (!$user->household) {
             return response()->json([
+                'success' => false,
                 'message' => 'No household found',
             ], 403);
         }
 
         $subscription = $user->household->currentSubscription;
 
+        // ✅ FIXED: Allow canceled/expired subscriptions to pass through
+        // Only block if truly no subscription exists
         if (!$subscription) {
             return response()->json([
+                'success' => false,
                 'message' => 'No subscription found',
                 'action' => 'subscribe',
-            ], 402); // Payment Required
-        }
-
-        if ($subscription->isExpired()) {
-            return response()->json([
-                'message' => 'Subscription has expired',
-                'action' => 'renew',
-                'expired_at' => $subscription->expires_at,
             ], 402);
         }
 
-        if ($subscription->isCanceled()) {
-            return response()->json([
-                'message' => 'Subscription has been canceled',
-                'action' => 'reactivate',
-                'canceled_at' => $subscription->canceled_at,
-            ], 402);
-        }
+        // ✅ REMOVED: Don't block expired/canceled
+        // Let controller handle these cases
+        // This allows users to:
+        // - View their data
+        // - See subscription status
+        // - Resubscribe/renew
 
         return $next($request);
     }
