@@ -20,6 +20,7 @@ class SubscriptionController extends Controller
         
         if (!$household) {
             return response()->json([
+                'success' => false,
                 'message' => 'No household found',
             ], 404);
         }
@@ -28,19 +29,33 @@ class SubscriptionController extends Controller
                                 ->with('plan')
                                 ->first();
 
+        // ✅ FIXED: Jika tidak ada subscription, return free plan
         if (!$subscription) {
+            // Get free plan
+            $freePlan = \App\Models\Plan::where('slug', 'premium-free')->first();
+            
             return response()->json([
-                'message' => 'No active subscription',
-            ], 404);
+                'success' => true,
+                'subscription' => null,
+                'free_plan' => $freePlan ? [
+                    'name' => $freePlan->name,
+                    'slug' => $freePlan->slug,
+                    'type' => $freePlan->type,
+                    'features' => $freePlan->features,
+                ] : null,
+                'pending_payment' => null,
+            ]);
         }
 
-        // ✅ TAMBAHKAN: Check pending payment
+        // ✅ Check pending payment
         $pendingPayment = Payment::where('household_id', $household->id)
             ->where('status', 'pending')
             ->latest()
             ->first();
 
+        // ✅ FIXED: Return data even if canceled
         return response()->json([
+            'success' => true,
             'subscription' => [
                 'id' => $subscription->id,
                 'plan' => [
@@ -55,8 +70,9 @@ class SubscriptionController extends Controller
                 'trial_ends_at' => $subscription->trial_ends_at,
                 'auto_renew' => $subscription->auto_renew,
                 'days_until_expiry' => $subscription->daysUntilExpiry(),
+                'canceled_at' => $subscription->canceled_at,
             ],
-            'pending_payment' => $pendingPayment,  // ✅ TAMBAHKAN ini
+            'pending_payment' => $pendingPayment,
         ]);
     }
 
@@ -67,6 +83,7 @@ class SubscriptionController extends Controller
     {
         if (!$plan->is_active) {
             return response()->json([
+                'success' => false,
                 'message' => 'Plan not available',
             ], 400);
         }
@@ -74,16 +91,24 @@ class SubscriptionController extends Controller
         $user = $request->user();
         $household = $user->household;
 
-        // Only owner or billing owner can subscribe
         if (!$user->isOwner() && !$user->isBillingOwner()) {
             return response()->json([
+                'success' => false,
                 'message' => 'Only owner or billing owner can manage subscription',
             ], 403);
         }
 
         DB::beginTransaction();
         try {
-            // Cancel current subscription if exists
+            // ✅ AUTO-CANCEL old pending payments
+            Payment::where('household_id', $household->id)
+                ->where('status', 'pending')
+                ->update([
+                    'status' => 'expired',
+                    'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_canceled', true, '$.reason', 'New subscription created')")
+                ]);
+
+            // ✅ Cancel current subscription if exists
             if ($household->currentSubscription) {
                 $household->currentSubscription->cancel('Upgraded/downgraded plan');
             }
@@ -116,38 +141,47 @@ class SubscriptionController extends Controller
                     'household_id' => $household->id,
                     'user_id' => $user->id,
                     'amount' => $plan->price,
-                    'tax' => 0, // Calculate tax jika perlu
+                    'tax' => 0,
                     'total' => $plan->price,
                     'currency' => $plan->currency,
-                    'payment_method' => 'midtrans',
+                    'payment_method' => 'pending', // ✅ Will be set when user chooses method
                     'status' => 'pending',
                 ]);
 
                 DB::commit();
 
                 return response()->json([
+                    'success' => true,
                     'message' => 'Subscription created, please complete payment',
                     'subscription' => $subscription->load('plan'),
                     'payment' => [
                         'id' => $payment->id,
                         'amount' => $payment->total,
-                        'formatted_amount' => $payment->getFormattedTotal(),
+                        'formatted_amount' => 'Rp ' . number_format($payment->total, 0, ',', '.'),
                         'status' => $payment->status,
                     ],
-                    'next_step' => 'create_payment',
+                    'next_step' => 'choose_payment_method',
                 ], 201);
             }
 
             DB::commit();
 
             return response()->json([
+                'success' => true,
                 'message' => 'Subscription activated',
                 'subscription' => $subscription->load('plan'),
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+            
+            Log::error('Subscription failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return response()->json([
+                'success' => false,
                 'message' => 'Subscription failed',
                 'error' => $e->getMessage(),
             ], 500);

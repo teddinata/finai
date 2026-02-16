@@ -18,10 +18,47 @@ class UsageController extends Controller
         $household = $request->user()->household;
         $subscription = $household->currentSubscription;
 
-        if (!$subscription) {
+        // ✅ FIXED: Handle no subscription or canceled subscription
+        if (!$subscription || in_array($subscription->status, ['canceled', 'expired'])) {
+            // Get free plan
+            $freePlan = \App\Models\Plan::where('slug', 'premium-free')->first();
+            
+            if (!$freePlan) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No plan available',
+                ], 404);
+            }
+
+            // Get current usage
+            $transactionUsage = UsageLog::getMonthlyUsage($household->id, 'transaction');
+            $aiScanUsage = UsageLog::getMonthlyUsage($household->id, 'ai_scan');
+            
+            $storageUsed = DB::table('transactions')
+                ->where('household_id', $household->id)
+                ->whereNotNull('receipt_image')
+                ->count() * 500;
+            $storageUsedMB = round($storageUsed / 1024, 2);
+            
+            $userCount = $household->users()->count();
+
             return response()->json([
-                'message' => 'No active subscription',
-            ], 404);
+                'success' => true,
+                'subscription' => [
+                    'plan_name' => $freePlan->name,
+                    'plan_slug' => $freePlan->slug,
+                    'plan_type' => 'free',
+                    'status' => 'active',
+                    'expires_at' => null,
+                    'days_remaining' => null,
+                ],
+                'usage' => $this->getUsageData($freePlan, $transactionUsage, $aiScanUsage, $storageUsedMB, $userCount),
+                'period' => [
+                    'current_month' => now()->format('Y-m'),
+                    'resets_at' => now()->endOfMonth()->format('Y-m-d H:i:s'),
+                ],
+                'pending_upgrade' => null,
+            ]);
         }
 
         $plan = $subscription->plan;
@@ -30,7 +67,6 @@ class UsageController extends Controller
         $pendingPayment = Payment::where('household_id', $household->id)
             ->where('status', 'pending')
             ->whereHas('subscription', function ($query) use ($subscription) {
-                // Only consider payments for different plans (upgrades)
                 $query->where('plan_id', '!=', $subscription->plan_id);
             })
             ->with('subscription.plan')
@@ -42,18 +78,16 @@ class UsageController extends Controller
         $transactionUsage = UsageLog::getMonthlyUsage($household->id, 'transaction');
         $aiScanUsage = UsageLog::getMonthlyUsage($household->id, 'ai_scan');
         
-        // Storage calculation
         $storageUsed = DB::table('transactions')
             ->where('household_id', $household->id)
             ->whereNotNull('receipt_image')
-            ->count() * 500; // KB
+            ->count() * 500;
         $storageUsedMB = round($storageUsed / 1024, 2);
         
-        // User count
         $userCount = $household->users()->count();
 
-        // Build base response
         $response = [
+            'success' => true,
             'subscription' => [
                 'plan_name' => $plan->name,
                 'plan_slug' => $plan->slug,

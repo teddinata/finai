@@ -20,10 +20,15 @@ class HouseholdController extends Controller
                             ->first();
 
         if (!$household) {
-            return response()->json(['message' => 'No household found'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'No household found'
+            ], 404);
         }
 
+        // ✅ FIXED: Always return data, even if subscription is canceled
         return response()->json([
+            'success' => true,
             'household' => [
                 'id' => $household->id,
                 'name' => $household->name,
@@ -32,6 +37,7 @@ class HouseholdController extends Controller
                     'plan_name' => $household->currentSubscription->plan->name,
                     'status' => $household->currentSubscription->status,
                     'expires_at' => $household->currentSubscription->expires_at,
+                    'canceled_at' => $household->currentSubscription->canceled_at, // ✅ Added
                 ] : null,
                 'users' => $household->users->map(function ($user) {
                     return [
@@ -56,7 +62,10 @@ class HouseholdController extends Controller
         $household = $user->household;
 
         if (!$user->isOwner()) {
-            return response()->json(['message' => 'Only owner can update household'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'Only owner can update household'
+            ], 403);
         }
 
         $validated = $request->validate([
@@ -66,6 +75,7 @@ class HouseholdController extends Controller
         $household->update($validated);
 
         return response()->json([
+            'success' => true,
             'message' => 'Household updated successfully',
             'household' => [
                 'id' => $household->id,
@@ -83,7 +93,28 @@ class HouseholdController extends Controller
         $household = $user->household;
 
         if (!$user->isOwner()) {
-            return response()->json(['message' => 'Only owner can generate invite codes'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'Only owner can generate invite codes'
+            ], 403);
+        }
+
+        // ✅ Check if plan allows invite members
+        $subscription = $household->currentSubscription;
+        if (!$subscription || !$subscription->isActive()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active subscription',
+            ], 403);
+        }
+
+        $plan = $subscription->plan;
+        if (!($plan->features['invite_members'] ?? false)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Your plan does not support inviting members. Please upgrade to Pertalite or higher.',
+                'required_plan' => 'pertalite',
+            ], 403);
         }
 
         $validated = $request->validate([
@@ -97,6 +128,7 @@ class HouseholdController extends Controller
         );
 
         return response()->json([
+            'success' => true,
             'message' => 'Invite code generated successfully',
             'invite_code' => [
                 'code' => $inviteCode->code,
@@ -138,6 +170,7 @@ class HouseholdController extends Controller
                           });
 
         return response()->json([
+            'success' => true,
             'invite_codes' => $codes,
         ]);
     }
@@ -150,20 +183,30 @@ class HouseholdController extends Controller
         $user = $request->user();
 
         if ($inviteCode->household_id !== $user->household_id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
         }
 
         if (!$user->isOwner()) {
-            return response()->json(['message' => 'Only owner can revoke invite codes'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'Only owner can revoke invite codes'
+            ], 403);
         }
 
         if ($inviteCode->is_used) {
-            return response()->json(['message' => 'Cannot revoke used invite code'], 400);
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot revoke used invite code'
+            ], 400);
         }
 
         $inviteCode->update(['expires_at' => now()]);
 
         return response()->json([
+            'success' => true,
             'message' => 'Invite code revoked successfully',
         ]);
     }
@@ -176,15 +219,24 @@ class HouseholdController extends Controller
         $authUser = $request->user();
 
         if ($user->household_id !== $authUser->household_id) {
-            return response()->json(['message' => 'User not in your household'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'User not in your household'
+            ], 403);
         }
 
         if (!$authUser->isOwner()) {
-            return response()->json(['message' => 'Only owner can remove members'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'Only owner can remove members'
+            ], 403);
         }
 
         if ($user->isOwner()) {
-            return response()->json(['message' => 'Cannot remove owner'], 400);
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot remove owner'
+            ], 400);
         }
 
         $user->update([
@@ -193,6 +245,7 @@ class HouseholdController extends Controller
         ]);
 
         return response()->json([
+            'success' => true,
             'message' => 'Member removed successfully',
         ]);
     }
@@ -205,11 +258,17 @@ class HouseholdController extends Controller
         $authUser = $request->user();
 
         if ($user->household_id !== $authUser->household_id) {
-            return response()->json(['message' => 'User not in your household'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'User not in your household'
+            ], 403);
         }
 
         if (!$authUser->isOwner()) {
-            return response()->json(['message' => 'Only owner can update roles'], 403);
+            return response()->json([
+                'success' => false,
+                'message' => 'Only owner can update roles'
+            ], 403);
         }
 
         $validated = $request->validate([
@@ -219,6 +278,7 @@ class HouseholdController extends Controller
         $user->update($validated);
 
         return response()->json([
+            'success' => true,
             'message' => 'Member role updated successfully',
             'user' => [
                 'id' => $user->id,
