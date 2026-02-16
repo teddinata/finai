@@ -33,7 +33,7 @@ class WebhookController extends Controller
         ]);
 
         // Verify webhook token - gunakan cara proven works dari gascpns
-        $callbackToken = $request->header('x-callback-token');
+        $callbackToken = $request->header('X-CALLBACK-TOKEN');
         $expectedToken = env('XENDIT_WEBHOOK_TOKEN');
 
         Log::info('Webhook token verification', [
