@@ -25,14 +25,20 @@ class SubscriptionController extends Controller
         }
 
         $subscription = $household->currentSubscription()
-                                  ->with('plan')
-                                  ->first();
+                                ->with('plan')
+                                ->first();
 
         if (!$subscription) {
             return response()->json([
                 'message' => 'No active subscription',
             ], 404);
         }
+
+        // ✅ TAMBAHKAN: Check pending payment
+        $pendingPayment = Payment::where('household_id', $household->id)
+            ->where('status', 'pending')
+            ->latest()
+            ->first();
 
         return response()->json([
             'subscription' => [
@@ -50,6 +56,7 @@ class SubscriptionController extends Controller
                 'auto_renew' => $subscription->auto_renew,
                 'days_until_expiry' => $subscription->daysUntilExpiry(),
             ],
+            'pending_payment' => $pendingPayment,  // ✅ TAMBAHKAN ini
         ]);
     }
 

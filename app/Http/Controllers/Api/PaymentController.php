@@ -137,16 +137,27 @@ class PaymentController extends Controller
     {
         $user = Auth::user();
         
-        $payments = Payment::where('household_id', $user->household_id)
-            ->with(['subscription.plan', 'user'])
-            ->orderBy('created_at', 'desc')
-            ->paginate(20);
+        $query = Payment::where('household_id', $user->household_id)
+            ->with(['subscription.plan', 'user']);
+        
+        // ✅ TAMBAHKAN: Filter by status
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+        
+        // ✅ TAMBAHKAN: Limit parameter
+        $limit = $request->input('limit', 20);
+        
+        $payments = $query->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
 
         return response()->json([
             'success' => true,
             'data' => $payments,
         ]);
     }
+
 
     /**
      * Get payment status

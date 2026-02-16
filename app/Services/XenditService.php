@@ -8,6 +8,7 @@ use Xendit\PaymentRequest\PaymentRequestApi;
 use App\Models\Payment;
 use App\Models\Invoice;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class XenditService
 {
@@ -430,6 +431,15 @@ class XenditService
 
         // Create invoice
         $this->createOrUpdateInvoice($payment);
+
+        // ✅ TAMBAHKAN: Force refresh user data
+        if ($payment->household) {
+            // Clear any cached household data if you use cache
+            Cache::forget("household.{$payment->household_id}");
+            
+            // Refresh household relationships
+            $payment->household->load(['current_subscription.plan', 'users']);
+        }
 
         Log::info('=== handlePaymentSuccess END ===', [
             'payment_id' => $payment->id,
