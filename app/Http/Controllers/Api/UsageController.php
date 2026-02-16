@@ -18,11 +18,12 @@ class UsageController extends Controller
         $household = $request->user()->household;
         $subscription = $household->currentSubscription;
 
-        // ✅ FIXED: Handle no subscription or canceled subscription
-        if (!$subscription || in_array($subscription->status, ['canceled', 'expired'])) {
-            // Get free plan
+        // ✅ FIXED: Handle no subscription, canceled, expired, or PENDING subscription
+        // Pending = subscription created but payment not yet confirmed → use free plan limits
+        if (!$subscription || in_array($subscription->status, ['canceled', 'expired', 'pending'])) {
+            // Get free plan for usage limits
             $freePlan = \App\Models\Plan::where('slug', 'premium-free')->first();
-            
+
             if (!$freePlan) {
                 return response()->json([
                     'success' => false,
@@ -33,57 +34,99 @@ class UsageController extends Controller
             // Get current usage
             $transactionUsage = UsageLog::getMonthlyUsage($household->id, 'transaction');
             $aiScanUsage = UsageLog::getMonthlyUsage($household->id, 'ai_scan');
-            
+
             $storageUsed = DB::table('transactions')
                 ->where('household_id', $household->id)
                 ->whereNotNull('receipt_image')
                 ->count() * 500;
             $storageUsedMB = round($storageUsed / 1024, 2);
-            
+
             $userCount = $household->users()->count();
+
+            // For pending subscriptions, show the pending plan info but with free plan limits
+            $subscriptionInfo = [
+                'plan_name' => $freePlan->name,
+                'plan_slug' => $freePlan->slug,
+                'plan_type' => 'free',
+                'status' => $subscription ? $subscription->status : 'none',
+                'expires_at' => null,
+                'days_remaining' => null,
+            ];
+
+            // If pending, also include the pending plan info so frontend knows what they're upgrading to
+            $pendingUpgrade = null;
+            if ($subscription && $subscription->status === 'pending') {
+                $pendingPlan = $subscription->plan;
+                $pendingPayment = Payment::where('household_id', $household->id)
+                    ->where('subscription_id', $subscription->id)
+                    ->where('status', 'pending')
+                    ->latest()
+                    ->first();
+
+                if ($pendingPayment) {
+                    $pendingUpgrade = [
+                        'payment_id' => $pendingPayment->id,
+                        'plan_name' => $pendingPlan->name,
+                        'plan_slug' => $pendingPlan->slug,
+                        'plan_type' => $pendingPlan->type,
+                        'amount' => $pendingPayment->total,
+                        'formatted_amount' => 'Rp ' . number_format($pendingPayment->total, 0, ',', '.'),
+                        'payment_method' => $pendingPayment->payment_method,
+                        'created_at' => $pendingPayment->created_at,
+                        'usage_preview' => $this->getUsageData($pendingPlan, $transactionUsage, $aiScanUsage, $storageUsedMB, $userCount),
+                    ];
+                }
+                else {
+                    // Even without a payment record, show the pending plan info
+                    $pendingUpgrade = [
+                        'payment_id' => null,
+                        'plan_name' => $pendingPlan->name,
+                        'plan_slug' => $pendingPlan->slug,
+                        'plan_type' => $pendingPlan->type,
+                        'amount' => 0,
+                        'formatted_amount' => 'Rp 0',
+                        'payment_method' => null,
+                        'created_at' => $subscription->created_at,
+                        'usage_preview' => $this->getUsageData($pendingPlan, $transactionUsage, $aiScanUsage, $storageUsedMB, $userCount),
+                    ];
+                }
+            }
 
             return response()->json([
                 'success' => true,
-                'subscription' => [
-                    'plan_name' => $freePlan->name,
-                    'plan_slug' => $freePlan->slug,
-                    'plan_type' => 'free',
-                    'status' => 'active',
-                    'expires_at' => null,
-                    'days_remaining' => null,
-                ],
+                'subscription' => $subscriptionInfo,
                 'usage' => $this->getUsageData($freePlan, $transactionUsage, $aiScanUsage, $storageUsedMB, $userCount),
                 'period' => [
                     'current_month' => now()->format('Y-m'),
                     'resets_at' => now()->endOfMonth()->format('Y-m-d H:i:s'),
                 ],
-                'pending_upgrade' => null,
+                'pending_upgrade' => $pendingUpgrade,
             ]);
         }
 
         $plan = $subscription->plan;
-        
+
         // ✅ Check for pending upgrade payment
         $pendingPayment = Payment::where('household_id', $household->id)
             ->where('status', 'pending')
             ->whereHas('subscription', function ($query) use ($subscription) {
-                $query->where('plan_id', '!=', $subscription->plan_id);
-            })
+            $query->where('plan_id', '!=', $subscription->plan_id);
+        })
             ->with('subscription.plan')
             ->latest()
             ->first();
-        
+
         // Get current month usage
         $currentMonth = now()->format('Y-m');
         $transactionUsage = UsageLog::getMonthlyUsage($household->id, 'transaction');
         $aiScanUsage = UsageLog::getMonthlyUsage($household->id, 'ai_scan');
-        
+
         $storageUsed = DB::table('transactions')
             ->where('household_id', $household->id)
             ->whereNotNull('receipt_image')
             ->count() * 500;
         $storageUsedMB = round($storageUsed / 1024, 2);
-        
+
         $userCount = $household->users()->count();
 
         $response = [
@@ -106,7 +149,7 @@ class UsageController extends Controller
         // ✅ Add pending upgrade info if exists
         if ($pendingPayment) {
             $pendingPlan = $pendingPayment->subscription->plan;
-            
+
             $response['pending_upgrade'] = [
                 'payment_id' => $pendingPayment->id,
                 'plan_name' => $pendingPlan->name,
@@ -151,12 +194,12 @@ class UsageController extends Controller
         }
 
         $logs = $query->orderBy('date', 'desc')
-                     ->with('user:id,name')
-                     ->paginate(30);
+            ->with('user:id,name')
+            ->paginate(30);
 
         return response()->json([
             'usage_history' => $logs->through(function ($log) {
-                return [
+            return [
                     'id' => $log->id,
                     'feature' => $log->feature,
                     'count' => $log->count,
@@ -166,7 +209,7 @@ class UsageController extends Controller
                         'name' => $log->user->name,
                     ] : null,
                 ];
-            }),
+        }),
         ]);
     }
 
@@ -192,12 +235,12 @@ class UsageController extends Controller
             ->orderBy('date')
             ->get()
             ->map(function ($log) {
-                return [
-                    'date' => $log->date->format('Y-m-d'),
-                    'day' => $log->date->format('d'),
-                    'count' => $log->count,
-                ];
-            });
+            return [
+            'date' => $log->date->format('Y-m-d'),
+            'day' => $log->date->format('d'),
+            'count' => $log->count,
+            ];
+        });
 
         return response()->json([
             'feature' => $validated['feature'],

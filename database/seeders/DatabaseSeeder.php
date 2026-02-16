@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             CategoryParentMappingSeeder::class,
             AccountSeeder::class,
             AdminSeeder::class,
+            VoucherSeeder::class,
         ]);
 
         // User::factory()->create([

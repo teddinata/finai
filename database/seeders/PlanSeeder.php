@@ -14,7 +14,10 @@ class PlanSeeder extends Seeder
                 'name' => 'Premium',
                 'slug' => 'premium-free',
                 'type' => 'free',
-                'price' => 0, // Monthly price (for free = 0)
+                'price' => 0,
+                'discount_price' => null,
+                'price_yearly' => null,
+                'discount_price_yearly' => null,
                 'currency' => 'IDR',
                 'description' => 'Mulai kelola keuangan pribadi',
                 'is_active' => true,
@@ -57,7 +60,10 @@ class PlanSeeder extends Seeder
                 'name' => 'Pertalite',
                 'slug' => 'pertalite',
                 'type' => 'monthly', // Default type
-                'price' => 100, // Monthly price (Rp 10.000 in cents)
+                'price' => 29000,
+                'discount_price' => 23200, // Monthly 20% off
+                'price_yearly' => 89000,
+                'discount_price_yearly' => 71200, // Yearly 20% off
                 'currency' => 'IDR',
                 'description' => 'Tracking lengkap untuk keluarga kecil',
                 'is_active' => true,
@@ -65,8 +71,8 @@ class PlanSeeder extends Seeder
                 'sort_order' => 2,
                 'features' => [
                     // PRICING VARIATIONS
-                    'price_monthly' => 100, // Rp 10.000
-                    'price_yearly' => 490, // Rp 49.000 (save 51rb)
+                    'price_monthly' => 29000, // Rp 10.000
+                    'price_yearly' => 89000, // Rp 49.000 (save 51rb)
 
                     // USER & ACCESS
                     'max_users' => 3,
@@ -105,7 +111,10 @@ class PlanSeeder extends Seeder
                 'name' => 'Pertamax',
                 'slug' => 'pertamax',
                 'type' => 'monthly',
-                'price' => 900, // Monthly price (Rp 19.000 in cents)
+                'price' => 79000,
+                'discount_price' => 63200, // Monthly 20% off
+                'price_yearly' => 139000,
+                'discount_price_yearly' => 111200, // Yearly 20% off
                 'currency' => 'IDR',
                 'description' => 'Kontrol penuh keuangan keluarga',
                 'is_active' => true,
@@ -113,8 +122,8 @@ class PlanSeeder extends Seeder
                 'sort_order' => 3,
                 'features' => [
                     // PRICING VARIATIONS
-                    'price_monthly' => 900, // Rp 19.000
-                    'price_yearly' => 900, // Rp 99.000 (save 129rb)
+                    'price_monthly' => 79000, // Rp 19.000
+                    'price_yearly' => 139000, // Rp 99.000 (save 129rb)
 
                     // USER & ACCESS
                     'max_users' => 6,
@@ -155,7 +164,10 @@ class PlanSeeder extends Seeder
                 'name' => 'Turbo',
                 'slug' => 'turbo',
                 'type' => 'lifetime',
-                'price' => 1000, // Rp 149.000 in cents (lifetime)
+                'price' => 179000,
+                'discount_price' => 143200, // 20% off
+                'price_yearly' => null, // Lifetime, no yearly
+                'discount_price_yearly' => null,
                 'currency' => 'IDR',
                 'description' => 'Sekali bayar, pakai selamanya',
                 'is_active' => true,

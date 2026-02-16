@@ -19,6 +19,9 @@ class Payment extends Model
         'payment_method',
         'payment_gateway_id',
         'snap_token',
+        'voucher_id',
+        'discount_amount',
+        'original_amount',
         'status',
         'paid_at',
         'failed_at',
@@ -30,6 +33,8 @@ class Payment extends Model
         'amount' => 'integer',
         'tax' => 'integer',
         'total' => 'integer',
+        'discount_amount' => 'integer',
+        'original_amount' => 'integer',
         'paid_at' => 'datetime',
         'failed_at' => 'datetime',
         'refunded_at' => 'datetime',
@@ -55,6 +60,11 @@ class Payment extends Model
     public function invoice(): HasOne
     {
         return $this->hasOne(Invoice::class);
+    }
+
+    public function voucher(): BelongsTo
+    {
+        return $this->belongsTo(Voucher::class);
     }
 
     // Scopes
@@ -139,11 +149,16 @@ class Payment extends Model
 
     public function getFormattedTotal(): string
     {
-        return 'Rp ' . number_format($this->total , 0, ',', '.');
+        return 'Rp ' . number_format($this->total, 0, ',', '.');
     }
 
     public function getFormattedAmount(): string
     {
-        return 'Rp ' . number_format($this->amount , 0, ',', '.');
+        return 'Rp ' . number_format($this->amount, 0, ',', '.');
+    }
+
+    public function getFormattedDiscount(): string
+    {
+        return 'Rp ' . number_format($this->discount_amount, 0, ',', '.');
     }
 }

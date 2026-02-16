@@ -17,18 +17,7 @@ class PlanController extends Controller
                     ->ordered()
                     ->get()
                     ->map(function ($plan) {
-                        return [
-                            'id' => $plan->id,
-                            'name' => $plan->name,
-                            'slug' => $plan->slug,
-                            'type' => $plan->type,
-                            'price' => $plan->price,
-                            'formatted_price' => $plan->getFormattedPrice(),
-                            'currency' => $plan->currency,
-                            'description' => $plan->description,
-                            'features' => $plan->features,
-                            'is_popular' => $plan->is_popular,
-                        ];
+                        return $this->formatPlan($plan);
                     });
 
         return response()->json([
@@ -48,18 +37,35 @@ class PlanController extends Controller
         }
 
         return response()->json([
-            'plan' => [
-                'id' => $plan->id,
-                'name' => $plan->name,
-                'slug' => $plan->slug,
-                'type' => $plan->type,
-                'price' => $plan->price,
-                'formatted_price' => $plan->getFormattedPrice(),
-                'currency' => $plan->currency,
-                'description' => $plan->description,
-                'features' => $plan->features,
-                'is_popular' => $plan->is_popular,
-            ],
+            'plan' => $this->formatPlan($plan),
         ]);
+    }
+
+    /**
+     * Format plan response with discount/promo fields
+     */
+    private function formatPlan(Plan $plan): array
+    {
+        return [
+            'id' => $plan->id,
+            'name' => $plan->name,
+            'slug' => $plan->slug,
+            'type' => $plan->type,
+            'price' => $plan->price,
+            'discount_price' => $plan->discount_price,
+            'price_yearly' => $plan->price_yearly,
+            'discount_price_yearly' => $plan->discount_price_yearly,
+            'effective_price' => $plan->effective_price,
+            'effective_yearly_price' => $plan->effective_yearly_price,
+            'has_promo' => $plan->discount_price !== null && $plan->discount_price < $plan->price,
+            'has_yearly_promo' => $plan->discount_price_yearly !== null 
+                && $plan->price_yearly !== null 
+                && $plan->discount_price_yearly < $plan->price_yearly,
+            'formatted_price' => $plan->getFormattedPrice(),
+            'currency' => $plan->currency,
+            'description' => $plan->description,
+            'features' => $plan->features,
+            'is_popular' => $plan->is_popular,
+        ];
     }
 }

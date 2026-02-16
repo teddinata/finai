@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Household;
+use App\Models\Voucher; // Newly added
 use App\Models\Transaction;
 use App\Models\Subscription;
 use App\Models\Payment;
@@ -519,5 +520,95 @@ class AdminController extends Controller
             'message' => 'Plan updated successfully',
             'plan' => $plan,
         ]);
+    }
+    /**
+     * Vouchers Management
+     */
+    public function vouchers(Request $request)
+    {
+        $query = Voucher::withCount('usages');
+
+        if ($request->has('search')) {
+            $query->where('code', 'like', "%{$request->search}%")
+                ->orWhere('name', 'like', "%{$request->search}%");
+        }
+
+        if ($request->has('active')) {
+            $query->where('is_active', $request->active);
+        }
+
+        $vouchers = $query->latest()->paginate($request->get('per_page', 20));
+
+        return response()->json($vouchers);
+    }
+
+    public function storeVoucher(Request $request)
+    {
+        $validated = $request->validate([
+            'code' => 'required|string|unique:vouchers,code',
+            'name' => 'required|string|max:255',
+            'type' => 'required|in:percentage,fixed',
+            'value' => 'required|integer|min:0',
+            'max_discount_amount' => 'nullable|integer|min:0',
+            'min_purchase_amount' => 'nullable|integer|min:0',
+            'max_uses' => 'nullable|integer|min:1',
+            'max_uses_per_household' => 'nullable|integer|min:1',
+            'valid_from' => 'required|date',
+            'valid_until' => 'nullable|date|after:valid_from',
+            'applicable_plans' => 'nullable|array',
+            'is_active' => 'boolean',
+        ]);
+
+        $validated['created_by'] = $request->user()->id;
+
+        $voucher = Voucher::create($validated);
+
+        return response()->json([
+            'message' => 'Voucher created successfully',
+            'voucher' => $voucher,
+        ]);
+    }
+
+    public function updateVoucher(Request $request, $id)
+    {
+        $voucher = Voucher::findOrFail($id);
+
+        $validated = $request->validate([
+            'code' => 'sometimes|string|unique:vouchers,code,' . $id,
+            'name' => 'sometimes|string|max:255',
+            'type' => 'sometimes|in:percentage,fixed',
+            'value' => 'sometimes|integer|min:0',
+            'max_discount_amount' => 'nullable|integer|min:0',
+            'min_purchase_amount' => 'nullable|integer|min:0',
+            'max_uses' => 'nullable|integer|min:1',
+            'max_uses_per_household' => 'nullable|integer|min:1',
+            'valid_from' => 'sometimes|date',
+            'valid_until' => 'nullable|date|after:valid_from',
+            'applicable_plans' => 'nullable|array',
+            'is_active' => 'boolean',
+        ]);
+
+        $voucher->update($validated);
+
+        return response()->json([
+            'message' => 'Voucher updated successfully',
+            'voucher' => $voucher,
+        ]);
+    }
+
+    public function deleteVoucher($id)
+    {
+        $voucher = Voucher::findOrFail($id);
+
+        if ($voucher->usages()->exists()) {
+            // Soft delete or just deactivate? 
+            // Better to just deactivate if used
+            $voucher->update(['is_active' => false]);
+            return response()->json(['message' => 'Voucher deactivated (has usage history)']);
+        }
+
+        $voucher->delete();
+
+        return response()->json(['message' => 'Voucher deleted successfully']);
     }
 }

@@ -5,14 +5,22 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
 class Plan extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'name',
         'slug',
         'type',
         'price',
+        'discount_price',
+        'price_yearly',
+        'discount_price_yearly',
         'currency',
+
         'features',
         'description',
         'is_active',
@@ -23,6 +31,9 @@ class Plan extends Model
     protected $casts = [
         'features' => 'array',
         'price' => 'integer',
+        'discount_price' => 'integer',
+        'price_yearly' => 'integer',                // ✅ ADDED
+        'discount_price_yearly' => 'integer',        // ✅ ADDED
         'is_active' => 'boolean',
         'is_popular' => 'boolean',
         'sort_order' => 'integer',
@@ -64,6 +75,38 @@ class Plan extends Model
     public function isLifetime(): bool
     {
         return $this->type === 'lifetime';
+    }
+
+    public function getEffectivePriceAttribute(): int
+    {
+        return $this->discount_price ?? $this->price;
+    }
+
+    /**
+     * ✅ ADDED: Get effective yearly price (promo yearly if available)
+     */
+    public function getEffectiveYearlyPriceAttribute(): ?int
+    {
+        if ($this->price_yearly === null) {
+            return null;
+        }
+
+        return $this->discount_price_yearly ?? $this->price_yearly;
+    }
+
+    public function hasDiscount(): bool
+    {
+        return !is_null($this->discount_price) && $this->discount_price < $this->price;
+    }
+
+    /**
+     * ✅ ADDED: Check if plan has yearly promo
+     */
+    public function hasYearlyDiscount(): bool
+    {
+        return !is_null($this->discount_price_yearly) 
+            && !is_null($this->price_yearly)
+            && $this->discount_price_yearly < $this->price_yearly;
     }
 
     /**
