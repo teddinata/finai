@@ -126,7 +126,7 @@ class AuthController extends Controller
 
             if ($maxUsers !== -1 && $currentUsers >= $maxUsers) {
                 return response()->json([
-                    'message' => 'Household has reached maximum user limit',
+                    'message' => 'Grup sudah mencapai batas pengguna',
                 ], 403);
             }
 
@@ -150,7 +150,7 @@ class AuthController extends Controller
             DB::commit();
 
             return response()->json([
-                'message' => 'Registration successful',
+                'message' => 'Pendaftaran berhasil',
                 'user' => $user->load('household.currentSubscription.plan'),
                 'token' => $token,
             ], 201);
@@ -159,7 +159,7 @@ class AuthController extends Controller
         catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
-                'message' => 'Registration failed',
+                'message' => 'Pendaftaran gagal',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -179,13 +179,13 @@ class AuthController extends Controller
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
+                'email' => ['Email atau password salah'],
             ]);
         }
 
         if (!$user->active) {
             return response()->json([
-                'message' => 'Your account has been deactivated',
+                'message' => 'Akun Anda tidak aktif',
             ], 403);
         }
 
@@ -193,7 +193,7 @@ class AuthController extends Controller
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
-            'message' => 'Login successful',
+            'message' => 'Login berhasil',
             'user' => $user->load('household.currentSubscription.plan'),
             'token' => $token,
         ]);
@@ -207,7 +207,7 @@ class AuthController extends Controller
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([
-            'message' => 'Logged out successfully',
+            'message' => 'Logout berhasil',
         ]);
     }
 
@@ -239,7 +239,7 @@ class AuthController extends Controller
         $request->user()->update($validated);
 
         return response()->json([
-            'message' => 'Profile updated successfully',
+            'message' => 'Profil berhasil diperbarui',
             'user' => $request->user(),
         ]);
     }
@@ -256,7 +256,7 @@ class AuthController extends Controller
 
         if (!Hash::check($validated['current_password'], $request->user()->password)) {
             return response()->json([
-                'message' => 'Current password is incorrect',
+                'message' => 'Kata sandi saat ini salah',
             ], 400);
         }
 
@@ -265,7 +265,7 @@ class AuthController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'Password changed successfully',
+            'message' => 'Kata sandi berhasil diubah',
         ]);
     }
 }
