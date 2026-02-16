@@ -34,7 +34,8 @@ class WebhookController extends Controller
 
         // Verify webhook token - gunakan cara proven works dari gascpns
         $callbackToken = $request->header('X-CALLBACK-TOKEN');
-        $expectedToken = env('XENDIT_WEBHOOK_TOKEN');
+        // $expectedToken = env('XENDIT_WEBHOOK_TOKEN');
+        $expectedToken = config('xendit.webhook_token');
 
         Log::info('Webhook token verification', [
             'received' => $callbackToken,
@@ -61,7 +62,8 @@ class WebhookController extends Controller
             Log::info('Processing V1 webhook');
             return $this->handleV1Webhook($payload);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             Log::error('Webhook processing error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -92,24 +94,24 @@ class WebhookController extends Controller
 
         // Route by event type
         return match (true) {
-            // Invoice events
-            str_starts_with($event, 'invoice.') => $this->handleInvoiceWebhook($data),
+                // Invoice events
+                str_starts_with($event, 'invoice.') => $this->handleInvoiceWebhook($data),
 
-            // E-Wallet events
-            str_starts_with($event, 'ewallet.') => $this->handleEWalletWebhook($data),
+                // E-Wallet events
+                str_starts_with($event, 'ewallet.') => $this->handleEWalletWebhook($data),
 
-            // QRIS events
-            str_starts_with($event, 'qr.') => $this->handleQRISWebhook($data),
+                // QRIS events
+                str_starts_with($event, 'qr.') => $this->handleQRISWebhook($data),
 
-            // Virtual Account events
-            str_starts_with($event, 'fva.') ||
-            str_starts_with($event, 'virtual_account.') => $this->handleVirtualAccountWebhook($data),
+                // Virtual Account events
+                str_starts_with($event, 'fva.') ||
+                str_starts_with($event, 'virtual_account.') => $this->handleVirtualAccountWebhook($data),
 
-            // Payment Request events (Xendit V2 unified)
-            str_starts_with($event, 'payment.') => $this->handlePaymentRequestWebhook($data),
+                // Payment Request events (Xendit V2 unified)
+                str_starts_with($event, 'payment.') => $this->handlePaymentRequestWebhook($data),
 
-            default => $this->handleUnknownWebhook($event, $data),
-        };
+                default => $this->handleUnknownWebhook($event, $data),
+            };
     }
 
     // =========================================================================
@@ -131,18 +133,18 @@ class WebhookController extends Controller
 
         // Route by prefix
         return match (true) {
-            // Our custom prefixes from PaymentController
-            $externalId && str_starts_with($externalId, 'PAYMENT-') => $this->handleInvoiceWebhook($data),
-            $externalId && str_starts_with($externalId, 'VA-') => $this->handleVirtualAccountWebhook($data),
-            $referenceId && str_starts_with($referenceId, 'EWALLET-') => $this->handleEWalletWebhook($data),
-            $referenceId && str_starts_with($referenceId, 'QRIS-') => $this->handleQRISWebhook($data),
+                // Our custom prefixes from PaymentController
+                $externalId && str_starts_with($externalId, 'PAYMENT-') => $this->handleInvoiceWebhook($data),
+                $externalId && str_starts_with($externalId, 'VA-') => $this->handleVirtualAccountWebhook($data),
+                $referenceId && str_starts_with($referenceId, 'EWALLET-') => $this->handleEWalletWebhook($data),
+                $referenceId && str_starts_with($referenceId, 'QRIS-') => $this->handleQRISWebhook($data),
 
-            // Fallback: detect by payload structure (for Xendit test webhooks)
-            isset($data['callback_virtual_account_id']) => $this->handleVirtualAccountWebhook($data),
-            isset($data['payment_channel']) && isset($data['paid_amount']) => $this->handleInvoiceWebhook($data),
+                // Fallback: detect by payload structure (for Xendit test webhooks)
+                isset($data['callback_virtual_account_id']) => $this->handleVirtualAccountWebhook($data),
+                isset($data['payment_channel']) && isset($data['paid_amount']) => $this->handleInvoiceWebhook($data),
 
-            default => $this->handleUnknownWebhook('v1_unknown', $data),
-        };
+                default => $this->handleUnknownWebhook('v1_unknown', $data),
+            };
     }
 
     // =========================================================================
@@ -531,13 +533,13 @@ class WebhookController extends Controller
                     'payment_id' => $payment->id,
                     'data' => $data,
                 ]);
-                
+
                 $this->xenditService->handlePaymentSuccess($payment, [
                     'id' => $data['id'] ?? null,
                     'payment_channel' => $data['payment_method']['type'] ?? 'unknown',
                     'paid_amount' => $data['amount'] ?? $payment->total,
                 ]);
-                
+
                 // ✅ TAMBAHKAN: Log setelah handlePaymentSuccess
                 Log::info('handlePaymentSuccess completed', [
                     'payment_id' => $payment->id,
