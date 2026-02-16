@@ -25,13 +25,13 @@ class PlanSeeder extends Seeder
                     'max_users' => 1,
                     'invite_members' => false,
                     'web_access' => false,
-                    
+
                     // LIMITASI
                     'max_transactions_per_month' => 100,
                     'max_ai_scans_per_month' => 5,
                     'max_accounts' => 2,
                     'storage_mb' => 100,
-                    
+
                     // MODUL AKSES
                     'dashboard' => 'basic',
                     'transactions' => true,
@@ -41,7 +41,7 @@ class PlanSeeder extends Seeder
                     'analytics' => false,
                     'assets' => false,
                     'debts' => false,
-                    
+
                     // FITUR
                     'export_data' => false,
                     'custom_categories' => false,
@@ -66,19 +66,19 @@ class PlanSeeder extends Seeder
                 'features' => [
                     // PRICING VARIATIONS
                     'price_monthly' => 100, // Rp 10.000
-                    'price_yearly' => 49000,  // Rp 49.000 (save 51rb)
-                    
+                    'price_yearly' => 490, // Rp 49.000 (save 51rb)
+
                     // USER & ACCESS
                     'max_users' => 3,
                     'invite_members' => true,
                     'web_access' => false,
-                    
+
                     // LIMITASI
                     'max_transactions_per_month' => 500,
                     'max_ai_scans_per_month' => 100,
                     'max_accounts' => -1,
                     'storage_mb' => 500,
-                    
+
                     // MODUL AKSES
                     'dashboard' => 'advanced',
                     'transactions' => true,
@@ -88,7 +88,7 @@ class PlanSeeder extends Seeder
                     'analytics' => 'basic',
                     'assets' => true,
                     'debts' => false,
-                    
+
                     // FITUR
                     'export_data' => 'pdf',
                     'custom_categories' => true,
@@ -114,19 +114,19 @@ class PlanSeeder extends Seeder
                 'features' => [
                     // PRICING VARIATIONS
                     'price_monthly' => 900, // Rp 19.000
-                    'price_yearly' => 99000,  // Rp 99.000 (save 129rb)
-                    
+                    'price_yearly' => 900, // Rp 99.000 (save 129rb)
+
                     // USER & ACCESS
                     'max_users' => 6,
                     'invite_members' => true,
                     'web_access' => true,
-                    
+
                     // LIMITASI
                     'max_transactions_per_month' => 2000,
                     'max_ai_scans_per_month' => 500,
                     'max_accounts' => -1,
                     'storage_mb' => 2000,
-                    
+
                     // MODUL AKSES
                     'dashboard' => 'comprehensive',
                     'transactions' => true,
@@ -137,7 +137,7 @@ class PlanSeeder extends Seeder
                     'assets' => true,
                     'debts' => true,
                     'networth' => 'basic',
-                    
+
                     // FITUR
                     'export_data' => 'all',
                     'custom_categories' => true,
@@ -166,13 +166,13 @@ class PlanSeeder extends Seeder
                     'max_users' => -1,
                     'invite_members' => true,
                     'web_access' => true,
-                    
+
                     // LIMITASI
                     'max_transactions_per_month' => -1,
                     'max_ai_scans_per_month' => -1,
                     'max_accounts' => -1,
                     'storage_mb' => 10000,
-                    
+
                     // MODUL AKSES
                     'dashboard' => 'ai_powered',
                     'transactions' => true,
@@ -184,7 +184,7 @@ class PlanSeeder extends Seeder
                     'debts' => true,
                     'networth' => 'advanced',
                     'investments' => true,
-                    
+
                     // FITUR EKSKLUSIF
                     'export_data' => 'all',
                     'custom_categories' => true,
