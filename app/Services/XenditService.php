@@ -17,7 +17,7 @@ class XenditService
 
     public function __construct()
     {
-        // Lazy load initialization
+    // Lazy load initialization
     }
 
     protected function initXendit()
@@ -146,15 +146,16 @@ class XenditService
 
         try {
             $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
-        } catch (\Xendit\XenditSdkException $e) {
+        }
+        catch (\Xendit\XenditSdkException $e) {
             Log::error('Xendit Create VA Error: ' . $e->getMessage());
             throw $e;
         }
 
         // ✅ Extract semua data penting dari response
         $vaNumber = $result['payment_method']['virtual_account']['channel_properties']['virtual_account_number'] ?? null;
-        $vaId = $result['id'];  // pr-xxx (Payment Request ID)
-        $paymentMethodId = $result['payment_method']['id'] ?? null;  // ✅ pm-xxx (Payment Method ID)
+        $vaId = $result['id']; // pr-xxx (Payment Request ID)
+        $paymentMethodId = $result['payment_method']['id'] ?? null; // ✅ pm-xxx (Payment Method ID)
         $expiryDate = $result['payment_method']['virtual_account']['channel_properties']['expires_at'] ?? null;
 
         Log::info('Xendit VA Created', [
@@ -171,7 +172,7 @@ class XenditService
                 'va_number' => $vaNumber,
                 'bank_code' => $bankCode,
                 'va_id' => $vaId,
-                'payment_method_id' => $paymentMethodId,  // ✅ TAMBAHKAN INI
+                'payment_method_id' => $paymentMethodId, // ✅ TAMBAHKAN INI
                 'payment_method' => 'virtual_account',
                 'expected_amount' => $payment->total,
                 'reference_id' => $referenceId,
@@ -182,7 +183,7 @@ class XenditService
             'va_id' => $vaId,
             'va_number' => $vaNumber,
             'bank_code' => $bankCode,
-            'payment_method_id' => $paymentMethodId,  // ✅ RETURN JUGA
+            'payment_method_id' => $paymentMethodId, // ✅ RETURN JUGA
             'expected_amount' => $payment->total,
             'expiration_date' => $expiryDate,
         ];
@@ -227,7 +228,8 @@ class XenditService
 
         try {
             $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
-        } catch (\Xendit\XenditSdkException $e) {
+        }
+        catch (\Xendit\XenditSdkException $e) {
             Log::error('Xendit Create EWallet Error: ' . $e->getMessage());
             throw $e;
         }
@@ -242,7 +244,7 @@ class XenditService
             }
         }
 
-        $paymentMethodId = $result['payment_method']['id'] ?? null;  // ✅ Extract pm-xxx
+        $paymentMethodId = $result['payment_method']['id'] ?? null; // ✅ Extract pm-xxx
 
         $payment->update([
             'payment_gateway_id' => $result['id'],
@@ -251,7 +253,7 @@ class XenditService
             'metadata' => array_merge($payment->metadata ?? [], [
                 'ewallet_type' => $ewalletType,
                 'checkout_url' => $checkoutUrl,
-                'payment_method_id' => $paymentMethodId,  // ✅ TAMBAHKAN
+                'payment_method_id' => $paymentMethodId, // ✅ TAMBAHKAN
                 'payment_method' => 'ewallet',
                 'reference_id' => $referenceId,
             ]),
@@ -260,7 +262,7 @@ class XenditService
         return [
             'charge_id' => $result['id'],
             'checkout_url' => $checkoutUrl,
-            'payment_method_id' => $paymentMethodId,  // ✅ RETURN
+            'payment_method_id' => $paymentMethodId, // ✅ RETURN
         ];
     }
 
@@ -294,13 +296,14 @@ class XenditService
 
         try {
             $result = $apiInstance->createPaymentRequest(null, null, null, $paymentRequestParams);
-        } catch (\Xendit\XenditSdkException $e) {
+        }
+        catch (\Xendit\XenditSdkException $e) {
             Log::error('Xendit Create QRIS Error: ' . $e->getMessage());
             throw $e;
         }
 
         $qrString = $result['payment_method']['qr_code']['channel_properties']['qr_string'] ?? null;
-        $paymentMethodId = $result['payment_method']['id'] ?? null;  // ✅ Extract pm-xxx
+        $paymentMethodId = $result['payment_method']['id'] ?? null; // ✅ Extract pm-xxx
 
         $payment->update([
             'payment_gateway_id' => $result['id'],
@@ -309,7 +312,7 @@ class XenditService
             'metadata' => array_merge($payment->metadata ?? [], [
                 'qris_id' => $result['id'],
                 'qr_string' => $qrString,
-                'payment_method_id' => $paymentMethodId,  // ✅ TAMBAHKAN
+                'payment_method_id' => $paymentMethodId, // ✅ TAMBAHKAN
                 'payment_method' => 'qris',
                 'reference_id' => $referenceId,
             ]),
@@ -318,7 +321,7 @@ class XenditService
         return [
             'qris_id' => $result['id'],
             'qr_string' => $qrString,
-            'payment_method_id' => $paymentMethodId,  // ✅ RETURN
+            'payment_method_id' => $paymentMethodId, // ✅ RETURN
         ];
     }
 
@@ -361,7 +364,8 @@ class XenditService
         // Convert object to array if needed
         if (is_object($xenditData) && method_exists($xenditData, 'toArray')) {
             $xenditData = $xenditData->toArray();
-        } elseif (is_object($xenditData)) {
+        }
+        elseif (is_object($xenditData)) {
             $xenditData = (array)$xenditData;
         }
 
@@ -403,13 +407,13 @@ class XenditService
                 'plan' => $subscription->plan->name,
             ]);
 
-            // Calculate expiry based on plan type
-            $expiresAt = match ($subscription->plan->type) {
-                'monthly' => now()->addMonth(),
-                'yearly' => now()->addYear(),
-                'lifetime' => null,
-                default => now()->addMonth(),
-            };
+            // Calculate expiry based on billing cycle (respect monthly/yearly choice)
+            $expiresAt = match ($subscription->billing_cycle ?? 'monthly') {
+                    'yearly' => now()->addYear(),
+                    'monthly' => now()->addMonth(),
+                    'lifetime' => null,
+                    default => now()->addMonth(),
+                };
 
             $subscription->update([
                 'status' => 'active',
@@ -436,7 +440,7 @@ class XenditService
         if ($payment->household) {
             // Clear any cached household data if you use cache
             Cache::forget("household.{$payment->household_id}");
-            
+
             // Refresh household relationships
             $payment->household->load(['current_subscription.plan', 'users']);
         }
@@ -504,7 +508,8 @@ class XenditService
             ]);
 
             Log::info('Invoice created', ['invoice_id' => $invoice->id]);
-        } else {
+        }
+        else {
             $invoice->update([
                 'status' => 'paid',
                 'paid_at' => $payment->paid_at,
