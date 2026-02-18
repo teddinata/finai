@@ -653,18 +653,6 @@ class TransactionController extends Controller
             $model = 'gemini-2.5-flash';
             $apiKey = config('services.gemini.api_key');
             
-            // Extensive Debugging
-            $directEnv = env('GEMINI_API_KEY');
-            $configAppEnv = config('app.env');
-            
-            return [
-                'error' => 'DEBUG ANALYSIS',
-                'config_key_status' => $apiKey ? 'PRESENT' : 'MISSING',
-                'env_direct_status' => $directEnv ? 'PRESENT' : 'MISSING', 
-                'app_env_config' => $configAppEnv,
-                'services_config_raw' => config('services.gemini'),
-            ];
-
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
             $parts = [['text' => $prompt]];
