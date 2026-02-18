@@ -187,11 +187,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/', [TransactionController::class , 'index']);
             Route::get('/{transaction}', [TransactionController::class , 'show']);
             Route::post('/', [TransactionController::class , 'store'])
-                ->middleware('check.limit:transaction');
+                ->middleware('check.feature:transaction');
             Route::post('/scan', [TransactionController::class , 'scan'])
-                ->middleware(['check.limit:ai_scan', 'check.limit:transaction']);
+                ->middleware(['check.feature:ai_scan', 'check.feature:transaction']);
             Route::post('/chat', [TransactionController::class , 'chat'])
-                ->middleware('check.limit:transaction');
+                ->middleware('check.feature:transaction');
             Route::put('/{transaction}', [TransactionController::class , 'update']);
             Route::delete('/{transaction}', [TransactionController::class , 'destroy']);
         }
