@@ -656,8 +656,10 @@ class TransactionController extends Controller
             Log::info("Gemini Request Debug", [
                 'has_key' => !empty($apiKey),
                 'key_start' => substr($apiKey, 0, 4),
-                'config_value' => config('services.gemini.api_key'), // Careful with logs usually but for debug
             ]);
+
+            // Force error to see if key is loaded
+            return ['error' => 'DEBUG: Key is ' . ($apiKey ? 'Present: ' . substr($apiKey, 0, 4) . '...' : 'MISSING')];
 
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
