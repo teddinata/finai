@@ -652,6 +652,13 @@ class TransactionController extends Controller
         try {
             $model = 'gemini-2.5-flash';
             $apiKey = config('services.gemini.api_key');
+            
+            Log::info("Gemini Request Debug", [
+                'has_key' => !empty($apiKey),
+                'key_start' => substr($apiKey, 0, 4),
+                'config_value' => config('services.gemini.api_key'), // Careful with logs usually but for debug
+            ]);
+
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
             $parts = [['text' => $prompt]];
