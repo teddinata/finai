@@ -356,9 +356,9 @@ class TransactionController extends Controller
      */
     public function scan(Request $request)
     {
+        set_time_limit(120); // Increase execution time for image processing
         $household = $request->user()->household;
 
-        // 1. Cek Limit Feature
         $limit = $household->getFeatureLimit('max_ai_scans_per_month');
         if (UsageLog::hasReachedLimit($household->id, 'ai_scan', $limit)) {
             return response()->json([
@@ -367,31 +367,64 @@ class TransactionController extends Controller
             ], 429);
         }
 
-        // 2. Validate Image
         $request->validate([
-            'image' => 'required|image|mimes:jpg,jpeg,png|max:5120', // 5MB max
+            'image' => 'required|image|mimes:jpg,jpeg,png|max:5120',
+            'account_id' => 'nullable|exists:accounts,id',
         ]);
 
         DB::beginTransaction();
         try {
-            // 3. Store Image
             $imagePath = $request->file('image')->store('receipts', 'public');
 
-            // 4. Call Gemini AI (Sekarang sudah return Cents)
+            // ✅ DEBUG: Log file info
+            $fullPath = storage_path('app/public/' . $imagePath);
+            \Log::info('Scan Debug - File Info', [
+                'imagePath' => $imagePath,
+                'fullPath' => $fullPath,
+                'exists' => file_exists($fullPath),
+                'size' => file_exists($fullPath) ? filesize($fullPath) : 0,
+                'mime' => file_exists($fullPath) ? mime_content_type($fullPath) : null,
+            ]);
+
             $extractedData = $this->extractReceiptData($imagePath);
+
+            // ✅ DEBUG: Log hasil extractReceiptData
+            \Log::info('Scan Debug - Extracted Data', ['data' => $extractedData]);
 
             if (!$extractedData || isset($extractedData['error'])) {
                 throw new \Exception($extractedData['error'] ?? 'Gagal membaca struk');
             }
 
-            // 5. Create Transaction
+
+            // 5. Smart Date Validation
+            $extractedDate = $extractedData['tanggal'] ?? null;
+            $finalDate = now()->toDateString(); // Default to today
+
+            if ($extractedDate) {
+                try {
+                    $parsedDate = \Carbon\Carbon::parse($extractedDate);
+                    // Trust date only if it's within the current year or last year (for Jan scans)
+                    // User complained about 2020 reading. Current year is 2026.
+                    // If year is way off, assume OCR error.
+                    if ($parsedDate->year >= now()->subYear()->year && $parsedDate->year <= now()->addYear()->year) {
+                        $finalDate = $extractedDate;
+                    } else {
+                         \Log::info("Auto-correcting scan date from $extractedDate to $finalDate");
+                    }
+                } catch (\Exception $e) {
+                    \Log::warning("Invalid date format from AI: $extractedDate");
+                }
+            }
+
+            // Create Transaction
             $transaction = Transaction::create([
                 'household_id' => $household->id,
                 'created_by' => $request->user()->id,
                 'type' => 'expense',
+                'account_id' => $request->input('account_id'), 
                 'category_id' => $this->detectCategory($extractedData['merchant'] ?? null),
                 'merchant' => $extractedData['merchant'] ?? 'Unknown Merchant',
-                'tanggal' => $extractedData['tanggal'] ?? now()->toDateString(),
+                'tanggal' => $finalDate,
                 
                 // Data ini sudah dalam CENTS (dari fungsi extractReceiptData)
                 'subtotal' => $extractedData['subtotal'], 
@@ -426,7 +459,7 @@ class TransactionController extends Controller
 
             return response()->json([
                 'message' => 'Receipt scanned successfully',
-                'transaction' => $this->formatTransactionResponse($transaction->load(['category', 'items'])),
+                'transaction' => $this->formatTransactionResponse($transaction->load(['category', 'items', 'account'])),
             ], 201);
 
         } catch (\Exception $e) {
@@ -537,6 +570,10 @@ class TransactionController extends Controller
      * Extract receipt data using Gemini AI
      * Returns amounts in CENTS (IDR)
      */
+    /**
+     * Extract receipt data using Gemini AI
+     * Returns amounts in RAW IDR integers
+     */
     private function extractReceiptData(string $imagePath): ?array
     {
         $fullPath = storage_path('app/public/' . $imagePath);
@@ -545,14 +582,22 @@ class TransactionController extends Controller
         }
         
         $imageContent = base64_encode(file_get_contents($fullPath));
+        
+        // Detect mime type dari file asli
+        $mimeType = mime_content_type($fullPath);
+        $allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!in_array($mimeType, $allowedMimes)) {
+            $mimeType = 'image/jpeg'; // fallback
+        }
 
         $prompt = "Analyze this receipt image. Extract transaction details.
         
         Rules:
-        1. Return ONLY valid JSON.
+        1. Return ONLY valid JSON, no explanation, no markdown, no code block.
         2. 'tanggal' format: YYYY-MM-DD.
         3. 'metode_pembayaran' one of: cash, transfer, kartu_kredit, kartu_debit, ewallet.
-        4. Prices must be RAW INTEGERS (IDR). Example: if 15.000, return 15000. DO NOT include decimals or cents yet.
+        4. Prices must be RAW INTEGERS (IDR). Example: if 15.000, return 15000. No decimals.
+        5. If a field is unknown, use sensible defaults (0 for numbers, 'cash' for payment method).
         
         JSON Schema:
         {
@@ -567,8 +612,9 @@ class TransactionController extends Controller
             \"metode_pembayaran\": \"cash\"
         }";
 
-        return $this->sendGeminiRequest($prompt, $imageContent);
+        return $this->sendGeminiRequest($prompt, $imageContent, $mimeType);
     }
+
 
     /**
      * Extract chat data using Gemini AI
@@ -647,7 +693,14 @@ class TransactionController extends Controller
     /**
      * Send request to Gemini API
      */
-    private function sendGeminiRequest(string $prompt, ?string $imageBase64 = null): array
+    /**
+     * Send request to Gemini API
+     */
+        
+    /**
+     * Send request to Gemini API
+     */
+    private function sendGeminiRequest(string $prompt, ?string $imageBase64 = null, string $mimeType = 'image/jpeg'): array
     {
         try {
             $model = 'gemini-2.5-flash';
@@ -657,20 +710,23 @@ class TransactionController extends Controller
 
             $parts = [['text' => $prompt]];
             if ($imageBase64) {
-                $parts[] = ['inline_data' => ['mime_type' => 'image/jpeg', 'data' => $imageBase64]];
+                $parts[] = [
+                    'inline_data' => [
+                        'mime_type' => $mimeType,
+                        'data' => $imageBase64
+                    ]
+                ];
             }
 
-            $client = \Illuminate\Support\Facades\Http::withHeaders([
+            $response = \Illuminate\Support\Facades\Http::withHeaders([
                 'Content-Type' => 'application/json',
-            ]);
-
-            $response = $client->post($url, [
+            ])->timeout(60)->post($url, [
                 'contents' => [
                     ['parts' => $parts]
                 ],
                 'generationConfig' => [
                     'temperature' => 0.1,
-                    'maxOutputTokens' => 4000,
+                    'maxOutputTokens' => 16384,
                     'response_mime_type' => 'application/json',
                 ]
             ]);
@@ -680,39 +736,71 @@ class TransactionController extends Controller
             }
 
             if ($response->failed()) {
+                \Log::error('Gemini API Failed', [
+                    'status' => $response->status(),
+                    'body'   => $response->body()
+                ]);
                 throw new \Exception('Gemini API Error: ' . $response->body());
             }
 
             $result = $response->json();
             $text = $result['candidates'][0]['content']['parts'][0]['text'] ?? null;
 
-            if (!$text) return ['error' => 'Empty AI Response'];
+            if (!$text) {
+                \Log::error('Gemini Empty Response', ['result' => $result]);
+                return ['error' => 'Empty AI Response'];
+            }
 
-            $cleanJson = str_replace(['```json', '```'], '', $text);
+            // Log raw response untuk debugging
+            \Log::info('Gemini Raw Response', ['text' => $text]);
+
+            // Robust JSON extraction
+            $cleanJson = $this->extractJsonFromText($text);
+
+            if (!$cleanJson) {
+                \Log::error('Could not extract JSON from Gemini', ['text' => $text]);
+                return ['error' => 'Could not extract JSON from AI response'];
+            }
+
             $data = json_decode($cleanJson, true);
 
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Parse Error', ['text' => $text]);
-                return ['error' => 'Invalid JSON Format from AI'];
+                \Log::error('JSON Parse Error', [
+                    'error'      => json_last_error_msg(),
+                    'raw_text'   => $text,
+                    'clean_json' => $cleanJson
+                ]);
+                return ['error' => 'Invalid JSON Format from AI: ' . json_last_error_msg()];
             }
 
-            // Calculation and formatting
-            $total = (int) ($data['total'] ?? 0);
+            if ($data === null || !is_array($data)) {
+                \Log::error('JSON decoded to null or non-array', [
+                    'raw_text'   => $text,
+                    'clean_json' => $cleanJson,
+                ]);
+                return ['error' => 'AI response is null or not a valid object'];
+            }
+
+            // Normalize numeric fields
+            $total    = (int) ($data['total']    ?? 0);
             $subtotal = (int) ($data['subtotal'] ?? $total);
-            $diskon = (int) ($data['diskon'] ?? 0);
+            $diskon   = (int) ($data['diskon']   ?? 0);
 
-            $data['total'] = $total;
+            $data['total']    = $total;
             $data['subtotal'] = $subtotal;
-            $data['diskon'] = $diskon;
+            $data['diskon']   = $diskon;
 
+            // Normalize items
             if (!empty($data['items']) && is_array($data['items'])) {
                 foreach ($data['items'] as &$item) {
-                    $qty = (int) ($item['qty'] ?? 1);
+                    $qty         = (int) ($item['qty']          ?? 1);
                     $hargaSatuan = (int) ($item['harga_satuan'] ?? 0);
-                    
+
+                    $item['qty']          = $qty;
                     $item['harga_satuan'] = $hargaSatuan;
-                    $item['harga_total'] = ($hargaSatuan * $qty);
+                    $item['harga_total']  = $hargaSatuan * $qty;
                 }
+                unset($item);
             } else {
                 $data['items'] = [];
             }
@@ -720,9 +808,44 @@ class TransactionController extends Controller
             return $data;
 
         } catch (\Exception $e) {
-            \Log::error("Gemini API Error: " . $e->getMessage());
+            \Log::error('Gemini API Exception', ['message' => $e->getMessage()]);
             return ['error' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Extract JSON from text that might contain markdown code blocks
+     */
+    private function extractJsonFromText(string $text): ?string
+    {
+        $text = trim($text);
+
+        // Case 1: Pure JSON (starts with { or [)
+        if (str_starts_with($text, '{') || str_starts_with($text, '[')) {
+            return $text;
+        }
+
+        // Case 2: Wrapped in ```json ... ```
+        if (preg_match('/```json\s*([\s\S]*?)\s*```/i', $text, $matches)) {
+            return trim($matches[1]);
+        }
+
+        // Case 3: Wrapped in ``` ... ``` (no language tag)
+        if (preg_match('/```\s*([\s\S]*?)\s*```/', $text, $matches)) {
+            $inner = trim($matches[1]);
+            if (str_starts_with($inner, '{') || str_starts_with($inner, '[')) {
+                return $inner;
+            }
+        }
+
+        // Case 4: Find first { ... } block anywhere in text (fallback)
+        $start = strpos($text, '{');
+        $end   = strrpos($text, '}');
+        if ($start !== false && $end !== false && $end > $start) {
+            return substr($text, $start, $end - $start + 1);
+        }
+
+        return null;
     }
 
     /**
@@ -814,4 +937,5 @@ class TransactionController extends Controller
         ];
     }
 }
+ 
  

@@ -205,6 +205,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/timeline', [AnalyticsController::class , 'timeline']);
             Route::get('/comparison', [AnalyticsController::class , 'comparison']);
             Route::get('/trends', [AnalyticsController::class , 'trends']);
+            Route::post('/analyze', [AnalyticsController::class , 'analyze']);
         }
         );
 

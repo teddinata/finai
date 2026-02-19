@@ -11,6 +11,159 @@ use Carbon\Carbon;
 
 class AnalyticsController extends Controller
 {
+    protected $aiService;
+
+    public function __construct(\App\Services\AiAnalysisService $aiService)
+    {
+        $this->aiService = $aiService;
+    }
+
+    /**
+     * Analyze financial data with AI
+     */
+    public function analyze(Request $request)
+    {
+        set_time_limit(120); // Increase execution time to 2 minutes
+        $household = $request->user()->household;
+
+        $validated = $request->validate([
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date|after_or_equal:start_date',
+        ]);
+
+        $startDate = $validated['start_date'] ?? now()->startOfMonth()->toDateString();
+        $endDate = $validated['end_date'] ?? now()->endOfMonth()->toDateString();
+        $periodLabel = Carbon::parse($startDate)->format('d M Y') . ' - ' . Carbon::parse($endDate)->format('d M Y');
+
+        // Reuse summary logic to get data
+        // We can manually call existing methods or duplicate the query logic for efficiency specific to AI context
+        // reusing logic for consistency
+
+        $totalIncome = Transaction::forHousehold($household->id)
+            ->where('type', 'income')
+            ->whereBetween('tanggal', [$startDate, $endDate])
+            ->sum('total');
+
+        $totalExpense = Transaction::forHousehold($household->id)
+            ->where('type', 'expense')
+            ->whereBetween('tanggal', [$startDate, $endDate])
+            ->sum('total');
+
+        $topCategories = Transaction::forHousehold($household->id)
+            ->where('type', 'expense')
+            ->whereBetween('tanggal', [$startDate, $endDate])
+            ->select('category_id', DB::raw('SUM(total) as total'))
+            ->with('category:id,name')
+            ->whereNotNull('category_id')
+            ->groupBy('category_id')
+            ->orderByDesc('total')
+            ->limit(5)
+            ->get()
+            ->map(function ($item) {
+            return [
+            'category' => $item->category->name,
+            'total' => $item->total,
+            ];
+        });
+
+
+
+        // Add Income Analysis
+        $topIncomeSources = Transaction::forHousehold($household->id)
+            ->where('type', 'income')
+            ->whereBetween('tanggal', [$startDate, $endDate])
+            ->select('category_id', DB::raw('SUM(total) as total'))
+            ->with('category:id,name')
+            ->whereNotNull('category_id')
+            ->groupBy('category_id')
+            ->orderByDesc('total')
+            ->limit(3)
+            ->get()
+            ->map(function ($item) {
+            return [
+            'source' => $item->category->name,
+            'total' => $item->total,
+            ];
+        });
+
+        // 1. Budgets (Active)
+        $budgets = \App\Models\BudgetLimit::where('household_id', $household->id)
+            ->where('is_active', true)
+            ->with('category:id,name')
+            ->get()
+            ->map(function ($budget) {
+            $spending = $budget->getCurrentSpending();
+            return [
+            'category' => $budget->category->name ?? 'Unknown',
+            'limit' => $budget->limit_amount,
+            'spent' => $spending,
+            'remaining' => $budget->limit_amount - $spending,
+            'status' => $spending > $budget->limit_amount ? 'Over Budget' : 'Safe',
+            ];
+        });
+
+        // 2. Savings (Active)
+        $savings = \App\Models\SavingsGoal::where('household_id', $household->id)
+            ->where('status', 'active')
+            ->get()
+            ->map(function ($goal) {
+            return [
+            'name' => $goal->name,
+            'target' => $goal->target_amount,
+            'current' => $goal->current_amount,
+            'progress' => $goal->getProgressPercentage() . '%',
+            'remaining' => $goal->getRemainingAmount(),
+            ];
+        });
+
+        // 3. Investments (Active)
+        $investments = \App\Models\Investment::where('household_id', $household->id)
+            ->where('status', 'active')
+            ->get();
+
+        $investmentSummary = [
+            'total_value' => $investments->sum('current_value'),
+            'total_invested' => $investments->sum('initial_amount'),
+            'profit_loss' => $investments->sum('current_value') - $investments->sum('initial_amount'),
+            'count' => $investments->count(),
+        ];
+
+        // 4. Recurring Transactions (Active Bills/Income)
+        $recurring = \App\Models\RecurringTransaction::where('household_id', $household->id)
+            ->where('status', 'active')
+            ->get()
+            ->map(function ($rec) {
+            return [
+            'name' => $rec->name,
+            'amount' => $rec->amount,
+            'type' => $rec->type, // expense/income
+            'frequency' => $rec->frequency,
+            'next_due' => $rec->next_occurrence ? $rec->next_occurrence->format('Y-m-d') : 'N/A',
+            ];
+        });
+
+        $data = [
+            'period' => $periodLabel,
+            'summary' => [
+                'total_income' => $totalIncome,
+                'total_expense' => $totalExpense,
+                'net_income' => $totalIncome - $totalExpense,
+            ],
+            'expenses_breakdown' => $topCategories,
+            'income_breakdown' => $topIncomeSources,
+            'budgets' => $budgets,
+            'savings_goals' => $savings,
+            'investments' => $investmentSummary,
+            'recurring_transactions' => $recurring,
+        ];
+
+        $analysis = $this->aiService->analyze($data, $periodLabel);
+
+        return response()->json([
+            'analysis' => $analysis
+        ]);
+    }
+
     /**
      * Get dashboard summary
      */
@@ -59,8 +212,8 @@ class AnalyticsController extends Controller
             ->whereBetween('tanggal', [$prevStartDate, $prevEndDate])
             ->sum('total');
 
-        $spendingChange = $prevTotalExpense > 0 
-            ? (($totalExpense - $prevTotalExpense) / $prevTotalExpense)  
+        $spendingChange = $prevTotalExpense > 0
+            ? (($totalExpense - $prevTotalExpense) / $prevTotalExpense)
             : 0;
 
         // Top categories (expenses only)
@@ -75,19 +228,19 @@ class AnalyticsController extends Controller
             ->limit(5)
             ->get()
             ->map(function ($item) use ($totalExpense) {
-                return [
-                    'category' => [
-                        'id' => $item->category->id,
-                        'name' => $item->category->name,
-                        'icon' => $item->category->icon,
-                        'color' => $item->category->color,
-                    ],
-                    'total' => $item->total,
-                    'formatted_total' => 'Rp ' . number_format($item->total , 0, ',', '.'),
-                    'count' => $item->count,
-                    'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense) , 1) : 0,
-                ];
-            });
+            return [
+            'category' => [
+            'id' => $item->category->id,
+            'name' => $item->category->name,
+            'icon' => $item->category->icon,
+            'color' => $item->category->color,
+            ],
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
+            'count' => $item->count,
+            'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense), 1) : 0,
+            ];
+        });
 
         // Top merchants (expenses only)
         $topMerchants = Transaction::forHousehold($household->id)
@@ -99,14 +252,14 @@ class AnalyticsController extends Controller
             ->limit(5)
             ->get()
             ->map(function ($item) use ($totalExpense) {
-                return [
-                    'merchant' => $item->merchant,
-                    'total' => $item->total,
-                    'formatted_total' => 'Rp ' . number_format($item->total , 0, ',', '.'),
-                    'count' => $item->count,
-                    'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense) , 1) : 0,
-                ];
-            });
+            return [
+            'merchant' => $item->merchant,
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
+            'count' => $item->count,
+            'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense), 1) : 0,
+            ];
+        });
 
         $accountBreakdown = Transaction::forHousehold($household->id)
             ->whereBetween('tanggal', [$startDate, $endDate])
@@ -116,18 +269,18 @@ class AnalyticsController extends Controller
             ->groupBy('account_id')
             ->get()
             ->map(function ($item) {
-                return [
-                    'account' => [
-                        'id' => $item->account->id,
-                        'name' => $item->account->name,
-                        'icon' => $item->account->icon,
-                        'color' => $item->account->color,
-                    ],
-                    'total' => $item->total,
-                    'formatted_total' => 'Rp ' . number_format($item->total / 100, 0, ',', '.'),
-                    'count' => $item->count,
-                ];
-            });
+            return [
+            'account' => [
+            'id' => $item->account->id,
+            'name' => $item->account->name,
+            'icon' => $item->account->icon,
+            'color' => $item->account->color,
+            ],
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total / 100, 0, ',', '.'),
+            'count' => $item->count,
+            ];
+        });
 
 
         // Payment method breakdown (all transactions)
@@ -149,16 +302,16 @@ class AnalyticsController extends Controller
         return response()->json([
             'summary' => [
                 'total_income' => $totalIncome,
-                'formatted_total_income' => 'Rp ' . number_format($totalIncome , 0, ',', '.'),
+                'formatted_total_income' => 'Rp ' . number_format($totalIncome, 0, ',', '.'),
                 'total_expense' => $totalExpense,
-                'formatted_total_expense' => 'Rp ' . number_format($totalExpense , 0, ',', '.'),
+                'formatted_total_expense' => 'Rp ' . number_format($totalExpense, 0, ',', '.'),
                 'total_spending' => $totalExpense, // Backward compatibility
-                'formatted_total_spending' => 'Rp ' . number_format($totalExpense , 0, ',', '.'),
+                'formatted_total_spending' => 'Rp ' . number_format($totalExpense, 0, ',', '.'),
                 'net_income' => $netIncome,
-                'formatted_net_income' => 'Rp ' . number_format($netIncome , 0, ',', '.'),
+                'formatted_net_income' => 'Rp ' . number_format($netIncome, 0, ',', '.'),
                 'transaction_count' => $transactionCount,
                 'avg_transaction' => round($avgTransaction),
-                'formatted_avg_transaction' => 'Rp ' . number_format($avgTransaction , 0, ',', '.'),
+                'formatted_avg_transaction' => 'Rp ' . number_format($avgTransaction, 0, ',', '.'),
                 'spending_change_percentage' => round($spendingChange, 1),
                 'period' => [
                     'start_date' => $startDate,
@@ -203,21 +356,21 @@ class AnalyticsController extends Controller
 
         $data = $categories->map(function ($item) use ($totalAmount) {
             return [
-                'category_id' => $item->category->id,
-                'name' => $item->category->name,
-                'icon' => $item->category->icon,
-                'color' => $item->category->color,
-                'total' => $item->total,
-                'formatted_total' => 'Rp ' . number_format($item->total , 0, ',', '.'),
-                'count' => $item->count,
-                'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount) , 1) : 0,
+            'category_id' => $item->category->id,
+            'name' => $item->category->name,
+            'icon' => $item->category->icon,
+            'color' => $item->category->color,
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
+            'count' => $item->count,
+            'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount), 1) : 0,
             ];
         });
 
         return response()->json([
             'categories' => $data,
             'total' => $totalAmount,
-            'formatted_total' => 'Rp ' . number_format($totalAmount , 0, ',', '.'),
+            'formatted_total' => 'Rp ' . number_format($totalAmount, 0, ',', '.'),
         ]);
     }
 
@@ -256,19 +409,19 @@ class AnalyticsController extends Controller
 
         $data = $merchants->map(function ($item) use ($totalAmount) {
             return [
-                'merchant' => $item->merchant,
-                'total' => $item->total,
-                'formatted_total' => 'Rp ' . number_format($item->total , 0, ',', '.'),
-                'transaction_count' => $item->transaction_count,
-                'last_transaction' => $item->last_transaction,
-                'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount) , 1) : 0,
+            'merchant' => $item->merchant,
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
+            'transaction_count' => $item->transaction_count,
+            'last_transaction' => $item->last_transaction,
+            'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount), 1) : 0,
             ];
         });
 
         return response()->json([
             'merchants' => $data,
             'total' => $totalAmount,
-            'formatted_total' => 'Rp ' . number_format($totalAmount , 0, ',', '.'),
+            'formatted_total' => 'Rp ' . number_format($totalAmount, 0, ',', '.'),
         ]);
     }
 
@@ -291,11 +444,11 @@ class AnalyticsController extends Controller
         $groupBy = $validated['group_by'] ?? 'day';
         $type = $validated['type'] ?? 'expense';
 
-        $dateFormat = match($groupBy) {
-            'day' => '%Y-%m-%d',
-            'week' => '%Y-%u',
-            'month' => '%Y-%m',
-        };
+        $dateFormat = match ($groupBy) {
+                'day' => '%Y-%m-%d',
+                'week' => '%Y-%u',
+                'month' => '%Y-%m',
+            };
 
         $query = Transaction::forHousehold($household->id)
             ->whereBetween('tanggal', [$startDate, $endDate]);
@@ -305,22 +458,22 @@ class AnalyticsController extends Controller
         }
 
         $transactions = $query->select(
-                DB::raw("DATE_FORMAT(tanggal, '{$dateFormat}') as period"),
-                DB::raw('SUM(total) as total'),
-                DB::raw('COUNT(*) as count')
-            )
+            DB::raw("DATE_FORMAT(tanggal, '{$dateFormat}') as period"),
+            DB::raw('SUM(total) as total'),
+            DB::raw('COUNT(*) as count')
+        )
             ->groupBy('period')
             ->orderBy('period')
             ->get()
             ->map(function ($item) use ($groupBy) {
-                return [
-                    'period' => $item->period,
-                    'label' => $this->formatPeriodLabel($item->period, $groupBy),
-                    'total' => $item->total,
-                    'formatted_total' => 'Rp ' . number_format($item->total , 0, ',', '.'),
-                    'count' => $item->count,
-                ];
-            });
+            return [
+            'period' => $item->period,
+            'label' => $this->formatPeriodLabel($item->period, $groupBy),
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
+            'count' => $item->count,
+            ];
+        });
 
         return response()->json([
             'timeline' => $transactions,
@@ -363,12 +516,12 @@ class AnalyticsController extends Controller
             ->count();
 
         // Calculate changes
-        $spendingChange = $previousSpending > 0 
-            ? (($currentSpending - $previousSpending) / $previousSpending)  
+        $spendingChange = $previousSpending > 0
+            ? (($currentSpending - $previousSpending) / $previousSpending)
             : 0;
 
-        $countChange = $previousCount > 0 
-            ? (($currentCount - $previousCount) / $previousCount)  
+        $countChange = $previousCount > 0
+            ? (($currentCount - $previousCount) / $previousCount)
             : 0;
 
         return response()->json([
@@ -376,14 +529,14 @@ class AnalyticsController extends Controller
                 'start_date' => $validated['current_start'],
                 'end_date' => $validated['current_end'],
                 'total_spending' => $currentSpending,
-                'formatted_total' => 'Rp ' . number_format($currentSpending , 0, ',', '.'),
+                'formatted_total' => 'Rp ' . number_format($currentSpending, 0, ',', '.'),
                 'transaction_count' => $currentCount,
             ],
             'previous_period' => [
                 'start_date' => $validated['previous_start'],
                 'end_date' => $validated['previous_end'],
                 'total_spending' => $previousSpending,
-                'formatted_total' => 'Rp ' . number_format($previousSpending , 0, ',', '.'),
+                'formatted_total' => 'Rp ' . number_format($previousSpending, 0, ',', '.'),
                 'transaction_count' => $previousCount,
             ],
             'changes' => [
@@ -413,37 +566,37 @@ class AnalyticsController extends Controller
             ->where('type', 'expense')
             ->where('tanggal', '>=', $startDate)
             ->select(
-                DB::raw('YEAR(tanggal) as year'),
-                DB::raw('MONTH(tanggal) as month'),
-                DB::raw('SUM(total) as total'),
-                DB::raw('COUNT(*) as count'),
-                DB::raw('AVG(total) as avg')
-            )
+            DB::raw('YEAR(tanggal) as year'),
+            DB::raw('MONTH(tanggal) as month'),
+            DB::raw('SUM(total) as total'),
+            DB::raw('COUNT(*) as count'),
+            DB::raw('AVG(total) as avg')
+        )
             ->groupBy('year', 'month')
             ->orderBy('year')
             ->orderBy('month')
             ->get()
             ->map(function ($item) {
-                $date = Carbon::createFromDate($item->year, $item->month, 1);
-                return [
-                    'period' => $date->format('Y-m'),
-                    'label' => $date->format('M Y'),
-                    'total' => $item->total,
-                    'formatted_total' => 'Rp ' . number_format($item->total , 0, ',', '.'),
-                    'count' => $item->count,
-                    'avg' => round($item->avg),
-                    'formatted_avg' => 'Rp ' . number_format($item->avg , 0, ',', '.'),
-                ];
-            });
+            $date = Carbon::createFromDate($item->year, $item->month, 1);
+            return [
+            'period' => $date->format('Y-m'),
+            'label' => $date->format('M Y'),
+            'total' => $item->total,
+            'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
+            'count' => $item->count,
+            'avg' => round($item->avg),
+            'formatted_avg' => 'Rp ' . number_format($item->avg, 0, ',', '.'),
+            ];
+        });
 
         // Calculate trend direction
         $recentMonths = $trends->take(-3);
         $avgRecent = $recentMonths->avg('total') ?? 0;
         $previousMonths = $trends->slice(-6, 3);
         $avgPrevious = $previousMonths->avg('total') ?? 0;
-        
-        $trendDirection = $avgPrevious > 0 
-            ? (($avgRecent - $avgPrevious) / $avgPrevious)  
+
+        $trendDirection = $avgPrevious > 0
+            ? (($avgRecent - $avgPrevious) / $avgPrevious)
             : 0;
 
         return response()->json([
@@ -476,11 +629,11 @@ class AnalyticsController extends Controller
      */
     private function formatPeriodLabel(string $period, string $groupBy): string
     {
-        return match($groupBy) {
-            'day' => Carbon::parse($period)->format('d M Y'),
-            'week' => 'Week ' . substr($period, -2) . ' ' . substr($period, 0, 4),
-            'month' => Carbon::parse($period . '-01')->format('M Y'),
-            default => $period,
-        };
+        return match ($groupBy) {
+                'day' => Carbon::parse($period)->format('d M Y'),
+                'week' => 'Week ' . substr($period, -2) . ' ' . substr($period, 0, 4),
+                'month' => Carbon::parse($period . '-01')->format('M Y'),
+                default => $period,
+            };
     }
 }
