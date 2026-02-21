@@ -47,6 +47,9 @@ Route::prefix('auth')->group(function () {
 Route::get('/plans', [PlanController::class , 'index']);
 Route::get('/plans/{plan}', [PlanController::class , 'show']);
 
+// Vouchers (public)
+Route::get('/vouchers', [\App\Http\Controllers\Api\VoucherController::class , 'index']);
+
 // Email verification (public with signed middleware)
 Route::get('/email/verify/{id}/{hash}', [EmailVerificationController::class , 'verify'])
     ->middleware(['signed'])

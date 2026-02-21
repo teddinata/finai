@@ -123,6 +123,7 @@ class WebhookTest extends TestCase
             ->postJson('/api/webhooks/xendit', $payload);
 
         // 4. Assert
+        $response->dump();
         $response->assertStatus(200);
 
         $this->assertDatabaseHas('payments', [

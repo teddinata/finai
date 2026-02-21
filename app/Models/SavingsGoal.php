@@ -36,14 +36,14 @@ class SavingsGoal extends Model
 
     public function creator(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class , 'created_by');
     }
 
     public function transactions(): BelongsToMany
     {
-        return $this->belongsToMany(Transaction::class, 'savings_goal_contributions')
-                    ->withPivot('amount')
-                    ->withTimestamps();
+        return $this->belongsToMany(Transaction::class , 'savings_goal_contributions')
+            ->withPivot('amount')
+            ->withTimestamps();
     }
 
     // Scopes
@@ -70,7 +70,8 @@ class SavingsGoal extends Model
     // Helpers
     public function getProgressPercentage(): float
     {
-        if ($this->target_amount === 0) return 0;
+        if ($this->target_amount === 0)
+            return 0;
         return min(100, round(($this->current_amount / $this->target_amount) * 100, 1));
     }
 
@@ -106,7 +107,8 @@ class SavingsGoal extends Model
 
     public function getDaysRemaining(): ?int
     {
-        if (!$this->deadline) return null;
+        if (!$this->deadline)
+            return null;
         return now()->diffInDays($this->deadline, false);
     }
 
@@ -114,10 +116,10 @@ class SavingsGoal extends Model
     {
         // Link transaction to this goal
         $this->transactions()->attach($transaction->id, ['amount' => $amount]);
-        
+
         // Update current amount
         $this->increment('current_amount', $amount);
-        
+
         // Auto-complete if target reached
         if ($this->isCompleted() && $this->status === 'active') {
             $this->update(['status' => 'completed']);
@@ -126,17 +128,22 @@ class SavingsGoal extends Model
 
     public function removeContribution(Transaction $transaction): void
     {
-        $contribution = $this->transactions()->where('transaction_id', $transaction->id)->first();
-        
+        \Illuminate\Support\Facades\Log::info("REMOVE_CONTRIBUTION: start for transaction " . $transaction->id . " on goal " . $this->id);
+        $contribution = $this->transactions()->find($transaction->id);
+
         if ($contribution) {
+            \Illuminate\Support\Facades\Log::info("REMOVE_CONTRIBUTION: found pivot " . $contribution->pivot->amount);
             $amount = $contribution->pivot->amount;
             $this->transactions()->detach($transaction->id);
             $this->decrement('current_amount', $amount);
-            
+
             // Revert to active if was completed
             if ($this->status === 'completed' && !$this->isCompleted()) {
                 $this->update(['status' => 'active']);
             }
+        }
+        else {
+            \Illuminate\Support\Facades\Log::info("REMOVE_CONTRIBUTION: contribution not found in pivot.");
         }
     }
 

@@ -19,6 +19,29 @@ class VoucherController extends Controller
     }
 
     /**
+     * Get all active and valid public vouchers
+     */
+    public function index(Request $request)
+    {
+        $query = \App\Models\Voucher::where('is_active', true)
+            ->where(function ($q) {
+            $q->whereNull('valid_until')
+                ->orWhere('valid_until', '>', now());
+        });
+
+        if ($request->has('search')) {
+            $query->where(function ($q) use ($request) {
+                $q->where('code', 'like', "%{$request->search}%")
+                    ->orWhere('name', 'like', "%{$request->search}%");
+            });
+        }
+
+        $vouchers = $query->latest()->get();
+
+        return response()->json(['vouchers' => $vouchers]);
+    }
+
+    /**
      * Validate voucher code and get discount details
      */
     public function validate(Request $request)

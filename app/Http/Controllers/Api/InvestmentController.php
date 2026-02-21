@@ -117,12 +117,25 @@ class InvestmentController extends Controller
                 'household_id' => $household->id,
                 'created_by' => $request->user()->id,
                 ...$validated,
-                'initial_amount' => $initialAmount,
-                'current_value' => $initialAmount, // Same as initial until updated
+                'initial_amount' => 0, // Will be updated by addBuyTransaction
+                'current_value' => 0,
                 'currency' => $validated['currency'] ?? 'IDR',
                 'icon' => $validated['icon'] ?? '📈',
                 'color' => $validated['color'] ?? '#3B82F6',
             ]);
+
+            // Auto create an initial buy transaction if quantity > 0
+            if ($validated['quantity'] > 0 && $validated['avg_buy_price'] > 0) {
+                $investment->addBuyTransaction(
+                    $validated['quantity'], 
+                    $validated['avg_buy_price'], 
+                    0, 
+                    $validated['purchase_date'] ?? now()->toDateString()
+                );
+                
+                // Create budget transaction
+                $this->createSystemTransaction($investment, 'expense', $initialAmount, $validated['purchase_date'] ?? now()->toDateString());
+            }
 
             DB::commit();
 
@@ -215,6 +228,10 @@ class InvestmentController extends Controller
                 $validated['transaction_date'] ?? now()->toDateString()
             );
 
+            // Create budget transaction
+            $totalAmount = ($validated['quantity'] * $validated['price_per_unit']) + ($validated['fee'] ?? 0);
+            $this->createSystemTransaction($investment, 'expense', $totalAmount, $validated['transaction_date'] ?? now()->toDateString());
+
             DB::commit();
 
             return response()->json([
@@ -262,6 +279,10 @@ class InvestmentController extends Controller
                 $validated['fee'] ?? 0,
                 $validated['transaction_date'] ?? now()->toDateString()
             );
+
+            // Create budget transaction
+            $totalAmount = ($validated['quantity'] * $validated['price_per_unit']) - ($validated['fee'] ?? 0);
+            $this->createSystemTransaction($investment, 'income', $totalAmount, $validated['transaction_date'] ?? now()->toDateString());
 
             DB::commit();
 
@@ -373,5 +394,46 @@ class InvestmentController extends Controller
     {
         $formatted = 'Rp ' . number_format(abs($amount), 0, ',', '.');
         return $amount >= 0 ? "+{$formatted}" : "-{$formatted}";
+    }
+
+    private function createSystemTransaction(Investment $investment, string $type, int $amount, string $date)
+    {
+        // Find Investasi category or fallback
+        $category = \App\Models\Category::where('household_id', $investment->household_id)
+            ->where('name', 'like', '%Investasi%')
+            ->first();
+            
+        if (!$category) {
+            $category = \App\Models\Category::whereNull('household_id')
+                ->where('name', 'like', '%Investasi%')
+                ->first();
+        }
+
+        $accountId = $investment->account_id;
+        if (!$accountId) {
+            $defaultAccount = \App\Models\Account::where('household_id', $investment->household_id)->first();
+            $accountId = $defaultAccount ? $defaultAccount->id : null;
+        }
+
+        // Only create if we have an account to link
+        if ($accountId) {
+            return \App\Models\Transaction::create([
+                'household_id' => $investment->household_id,
+                'created_by' => $investment->created_by,
+                'type' => $type, // 'expense' for buy, 'income' for sell
+                'category_id' => $category ? $category->id : \App\Models\Category::first()->id,
+                'account_id' => $accountId,
+                'investment_id' => $investment->id,
+                'merchant' => ($type === 'expense' ? 'Beli ' : 'Jual ') . $investment->name,
+                'tanggal' => $date,
+                'subtotal' => $amount,
+                'diskon' => 0,
+                'total' => $amount,
+                'source' => 'manual',
+                'notes' => 'Auto-generated investment transaction',
+            ]);
+        }
+        
+        return null;
     }
 }

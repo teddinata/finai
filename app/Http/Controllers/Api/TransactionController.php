@@ -51,8 +51,8 @@ class TransactionController extends Controller
 
          // Add parent category filter
         if ($request->filled('parent_category')) {
-            $query->whereHas('category', function($q) use ($request) {
-                $q->where('parent_category_slug', $request->parent_category);
+            $query->whereHas('category.parentCategory', function($q) use ($request) {
+                $q->where('slug', $request->parent_category);
             });
         }
 
@@ -110,6 +110,9 @@ class TransactionController extends Controller
             'total' => 'required|integer|min:1',
             'notes' => 'nullable|string',
             'source' => 'nullable|string',
+            'savings_goal_id' => 'nullable|exists:savings_goals,id',
+            'investment_id' => 'nullable|exists:investments,id',
+            'recurring_transaction_id' => 'nullable|exists:recurring_transactions,id',
         ]);
 
         try {
@@ -141,8 +144,22 @@ class TransactionController extends Controller
                 'diskon' => 0,
                 'total' => $validated['total'],
                 'source' => $validated['source'] ?? 'manual',
-                'notes' => $validated['notes'],
+                'notes' => $request->input('notes'),
             ]);
+
+            \Illuminate\Support\Facades\Log::info("SYNC CHECK: savings_goal_id in validated: " . ($validated['savings_goal_id'] ?? 'null'));
+
+            // Link to modules
+            if (!empty($validated['savings_goal_id'])) {
+                $savingsGoal = \App\Models\SavingsGoal::where('id', $validated['savings_goal_id'])
+                                                      ->where('household_id', $household->id)
+                                                      ->first();
+                \Illuminate\Support\Facades\Log::info("SYNC CHECK: Found savings goal " . ($savingsGoal ? 'YES' : 'NO'));
+                if ($savingsGoal) {
+                    $savingsGoal->addContribution($transaction, $validated['total']);
+                    \Illuminate\Support\Facades\Log::info("SYNC CHECK: addContribution called with total " . $validated['total']);
+                }
+            }
 
             // ✅ Update account balance - Handled by Transaction Observer
             // if ($validated['type'] === 'income') { ... }
@@ -344,11 +361,62 @@ class TransactionController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $transaction->delete();
+        try {
+            DB::beginTransaction();
 
-        return response()->json([
-            'message' => 'Transaction deleted successfully',
-        ]);
+            // Rollback Savings Goal Contribution
+            if ($transaction->savingsGoals()->exists()) {
+                $goals = $transaction->savingsGoals()->get();
+                foreach ($goals as $goal) {
+                    $goal->removeContribution($transaction);
+                }
+            }
+
+            // Rollback Investment
+            if ($transaction->investment_id) {
+                $investment = \App\Models\Investment::find($transaction->investment_id);
+                if ($investment && $transaction->type === 'expense') {
+                    // Reverse a buy
+                    $investment->shares -= 1; // Simplistic
+                    $investment->total_invested -= $transaction->total;
+                    if ($investment->shares < 0) $investment->shares = 0;
+                    if ($investment->total_invested < 0) $investment->total_invested = 0;
+                    $investment->save();
+                    
+                    \App\Models\InvestmentTransaction::where('transaction_id', $transaction->id)->delete();
+                } elseif ($investment && $transaction->type === 'income') {
+                    // Reverse a sell
+                    $investment->shares += 1;
+                    $investment->save();
+                    \App\Models\InvestmentTransaction::where('transaction_id', $transaction->id)->delete();
+                }
+            }
+
+            // Rollback Recurring Transaction
+            if ($transaction->recurring_transaction_id) {
+                $recurring = \App\Models\RecurringTransaction::find($transaction->recurring_transaction_id);
+                if ($recurring) {
+                    $recurring->decrement('occurrences_count');
+                    if ($recurring->status === 'completed') {
+                        $recurring->update(['status' => 'active']);
+                    }
+                }
+            }
+
+            $transaction->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Transaction deleted successfully',
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to delete transaction',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
@@ -937,5 +1005,3 @@ class TransactionController extends Controller
         ];
     }
 }
- 
- 

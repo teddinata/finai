@@ -508,12 +508,29 @@ class AdminController extends Controller
     public function updatePlan(Request $request, $planId)
     {
         $validated = $request->validate([
-            'is_active' => 'sometimes|boolean',
+            'name' => 'sometimes|string|max:255',
+            'slug' => 'sometimes|string|unique:plans,slug,' . $planId,
+            'type' => 'sometimes|string|max:50',
             'price' => 'sometimes|integer|min:0',
+            'discount_price' => 'nullable|integer|min:0',
+            'price_yearly' => 'nullable|integer|min:0',
+            'discount_price_yearly' => 'nullable|integer|min:0',
+            'currency' => 'sometimes|string|max:10',
+            'description' => 'nullable|string',
+            'is_active' => 'sometimes|boolean',
+            'is_popular' => 'sometimes|boolean',
+            'sort_order' => 'sometimes|integer',
             'features' => 'sometimes|array',
         ]);
 
         $plan = Plan::findOrFail($planId);
+
+        // Merge features if provided
+        if (isset($validated['features'])) {
+            $existingFeatures = $plan->features ?? [];
+            $validated['features'] = array_merge($existingFeatures, $validated['features']);
+        }
+
         $plan->update($validated);
 
         return response()->json([

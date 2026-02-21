@@ -165,26 +165,57 @@ class SavingsGoalController extends Controller
         }
 
         $validated = $request->validate([
-            'transaction_id' => 'required|exists:transactions,id',
+            'transaction_id' => 'nullable|exists:transactions,id',
+            'account_id' => 'required_without:transaction_id|exists:accounts,id',
             'amount' => 'required|integer|min:1',
+            'notes' => 'nullable|string',
+            'tanggal' => 'nullable|date',
         ]);
-
-        $transaction = Transaction::find($validated['transaction_id']);
-
-        // Verify transaction belongs to household
-        if ($transaction->household_id !== $request->user()->household_id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        // Check if already linked
-        if ($savingsGoal->transactions()->where('transaction_id', $transaction->id)->exists()) {
-            return response()->json([
-                'message' => 'Transaction already linked to this goal',
-            ], 400);
-        }
 
         DB::beginTransaction();
         try {
+            if (!empty($validated['transaction_id'])) {
+                $transaction = Transaction::find($validated['transaction_id']);
+                
+                // Verify transaction belongs to household
+                if ($transaction->household_id !== $request->user()->household_id) {
+                    throw new \Exception('Unauthorized transaction');
+                }
+            } else {
+                // Find Tabungan category or fallback
+                $category = \App\Models\Category::where('household_id', $savingsGoal->household_id)
+                    ->where('name', 'like', '%Tabung%')
+                    ->first();
+                if (!$category) {
+                    $category = \App\Models\Category::whereNull('household_id')
+                        ->where('name', 'like', '%Tabung%')
+                        ->first();
+                }
+
+                $transaction = Transaction::create([
+                    'household_id' => $savingsGoal->household_id,
+                    'created_by' => $request->user()->id,
+                    'type' => 'expense',
+                    'category_id' => $category ? $category->id : \App\Models\Category::first()->id,
+                    'account_id' => $validated['account_id'],
+                    'merchant' => 'Nabung ' . $savingsGoal->name,
+                    'tanggal' => $validated['tanggal'] ?? now()->toDateString(),
+                    'subtotal' => $validated['amount'],
+                    'diskon' => 0,
+                    'total' => $validated['amount'],
+                    'source' => 'manual',
+                    'notes' => $validated['notes'] ?? 'Auto-generated contribution',
+                ]);
+            }
+
+            // Check if already linked
+            if ($savingsGoal->transactions()->where('transaction_id', $transaction->id)->exists()) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Transaction already linked to this goal',
+                ], 400);
+            }
+
             $savingsGoal->addContribution($transaction, $validated['amount']);
             DB::commit();
 

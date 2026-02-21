@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
             AccountSeeder::class,
             AdminSeeder::class,
             VoucherSeeder::class,
+            UpdatePlanQuotasSeeder::class,
         ]);
 
         // User::factory()->create([

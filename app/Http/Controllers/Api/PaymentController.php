@@ -73,6 +73,11 @@ class PaymentController extends Controller
 
                 $total = max(0, $originalAmount - $discountAmount);
 
+                // Expire existing pending payments
+                Payment::where('subscription_id', $subscription->id)
+                    ->where('status', 'pending')
+                    ->update(['status' => 'expired']);
+
                 // Create payment record
                 $payment = Payment::create([
                     'subscription_id' => $subscription->id,

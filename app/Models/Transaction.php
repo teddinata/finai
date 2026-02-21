@@ -13,6 +13,8 @@ class Transaction extends Model
         'created_by',
         'category_id',
         'account_id',
+        'recurring_transaction_id',
+        'investment_id',
         'type',
         'merchant',
         'tanggal',
@@ -40,7 +42,7 @@ class Transaction extends Model
 
     public function creator(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class , 'created_by');
     }
 
     public function category(): BelongsTo
@@ -51,6 +53,23 @@ class Transaction extends Model
     public function items(): HasMany
     {
         return $this->hasMany(TransactionItem::class);
+    }
+
+    public function recurringTransaction(): BelongsTo
+    {
+        return $this->belongsTo(RecurringTransaction::class);
+    }
+
+    public function investment(): BelongsTo
+    {
+        return $this->belongsTo(Investment::class);
+    }
+
+    public function savingsGoals()
+    {
+        return $this->belongsToMany(SavingsGoal::class , 'savings_goal_contributions')
+            ->withPivot('amount')
+            ->withTimestamps();
     }
 
     // Scopes
@@ -87,13 +106,13 @@ class Transaction extends Model
     public function scopeForMonth($query, int $year, int $month)
     {
         return $query->whereYear('tanggal', $year)
-                    ->whereMonth('tanggal', $month);
+            ->whereMonth('tanggal', $month);
     }
 
     public function scopeThisMonth($query)
     {
         return $query->whereYear('tanggal', now()->year)
-                    ->whereMonth('tanggal', now()->month);
+            ->whereMonth('tanggal', now()->month);
     }
 
     public function scopeForCategory($query, int $categoryId)
@@ -119,8 +138,8 @@ class Transaction extends Model
     public function scopeRecent($query, int $limit = 10)
     {
         return $query->orderBy('tanggal', 'desc')
-                    ->orderBy('created_at', 'desc')
-                    ->limit($limit);
+            ->orderBy('created_at', 'desc')
+            ->limit($limit);
     }
 
     // Helper methods
@@ -146,17 +165,17 @@ class Transaction extends Model
 
     public function getFormattedTotal(): string
     {
-        return 'Rp ' . number_format($this->total , 0, ',', '.');
+        return 'Rp ' . number_format($this->total, 0, ',', '.');
     }
 
     public function getFormattedSubtotal(): string
     {
-        return 'Rp ' . number_format($this->subtotal , 0, ',', '.');
+        return 'Rp ' . number_format($this->subtotal, 0, ',', '.');
     }
 
     public function getFormattedDiskon(): string
     {
-        return 'Rp ' . number_format($this->diskon , 0, ',', '.');
+        return 'Rp ' . number_format($this->diskon, 0, ',', '.');
     }
 
     public function getReceiptUrl(): ?string
@@ -200,7 +219,7 @@ class Transaction extends Model
         static::deleting(function ($transaction) {
             // Delete all items when transaction is deleted
             $transaction->items()->delete();
-            
+
             // Delete receipt image if exists
             if ($transaction->receipt_image && \Storage::exists($transaction->receipt_image)) {
                 \Storage::delete($transaction->receipt_image);

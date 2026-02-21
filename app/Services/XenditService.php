@@ -442,7 +442,7 @@ class XenditService
             Cache::forget("household.{$payment->household_id}");
 
             // Refresh household relationships
-            $payment->household->load(['current_subscription.plan', 'users']);
+            $payment->household->load(['currentSubscription.plan', 'users']);
         }
 
         Log::info('=== handlePaymentSuccess END ===', [
