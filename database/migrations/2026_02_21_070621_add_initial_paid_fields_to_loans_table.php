@@ -11,8 +11,12 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('loans', function (Blueprint $table) {
-            $table->unsignedBigInteger('initial_paid_amount')->default(0)->after('paid_amount')->comment('Amount already paid at time of import');
-            $table->unsignedInteger('initial_paid_periods')->default(0)->after('paid_periods')->comment('Number of months already paid at time of import');
+            if (!Schema::hasColumn('loans', 'initial_paid_amount')) {
+                $table->unsignedBigInteger('initial_paid_amount')->default(0)->after('paid_amount')->comment('Amount already paid at time of import');
+            }
+            if (!Schema::hasColumn('loans', 'initial_paid_periods')) {
+                $table->unsignedInteger('initial_paid_periods')->default(0)->after('paid_periods')->comment('Number of months already paid at time of import');
+            }
         });
     }
 
@@ -22,7 +26,12 @@ return new class extends Migration {
     public function down(): void
     {
         Schema::table('loans', function (Blueprint $table) {
-        //
+            if (Schema::hasColumn('loans', 'initial_paid_amount')) {
+                $table->dropColumn('initial_paid_amount');
+            }
+            if (Schema::hasColumn('loans', 'initial_paid_periods')) {
+                $table->dropColumn('initial_paid_periods');
+            }
         });
     }
 };
