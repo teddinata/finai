@@ -15,6 +15,7 @@ class Transaction extends Model
         'account_id',
         'recurring_transaction_id',
         'investment_id',
+        'loan_id',
         'type',
         'merchant',
         'tanggal',

@@ -23,7 +23,8 @@ class SavingsGoalController extends Controller
         ]);
 
         $query = SavingsGoal::forHousehold($household->id)
-            ->with('creator:id,name');
+            ->with('creator:id,name')
+            ->withCount('transactions');
 
         if (isset($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -306,6 +307,7 @@ class SavingsGoalController extends Controller
             ],
             'created_at' => $goal->created_at,
             'updated_at' => $goal->updated_at,
+            'contribution_count' => $goal->transactions_count ?? $goal->transactions()->count(),
         ];
 
         if ($includeTransactions) {

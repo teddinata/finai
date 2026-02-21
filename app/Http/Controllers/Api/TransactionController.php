@@ -392,6 +392,9 @@ class TransactionController extends Controller
                 }
             }
 
+            // Capture loan ID for later recalculation
+            $loanId = $transaction->loan_id;
+
             // Rollback Recurring Transaction
             if ($transaction->recurring_transaction_id) {
                 $recurring = \App\Models\RecurringTransaction::find($transaction->recurring_transaction_id);

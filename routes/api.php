@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\Admin\AdminController;
 use App\Http\Controllers\Api\SavingsGoalController;
 use App\Http\Controllers\Api\RecurringTransactionController;
 use App\Http\Controllers\Api\InvestmentController;
+use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\PaymentRedirectController;
 
 /*
@@ -249,6 +250,16 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{investment}/buy', [InvestmentController::class , 'buy']);
             Route::post('/{investment}/sell', [InvestmentController::class , 'sell']);
             Route::post('/{investment}/update-price', [InvestmentController::class , 'updatePrice']);
+        }
+        );
+
+        // Loans (Cicilan & Utang)
+        Route::prefix('loans')->middleware('check.subscription')->group(function () {
+            Route::get('/', [LoanController::class , 'index']);
+            Route::get('/{loan}', [LoanController::class , 'show']);
+            Route::post('/', [LoanController::class , 'store']);
+            Route::post('/{loan}/pay', [LoanController::class , 'pay']);
+            Route::delete('/{loan}', [LoanController::class , 'destroy']);
         }
         );
     });

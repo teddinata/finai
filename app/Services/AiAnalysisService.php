@@ -85,11 +85,13 @@ Struktur Analisis:
 3.  **Progres Kekayaan (Savings & Investments)**: 
     - Apakah mereka rajin menabung? 
     - Bagaimana performa investasi mereka (Profit/Loss)? Beri apresiasi atau semangat.
-4.  **Kewajiban Mendatang (Recurring)**: 
-    - Ingatkan jika ada tagihan rutin yang akan datang dan perlu disiapkan dananya.
-5.  **Rekomendasi Strategis (Actionable Insights)**:
-    - Berikan 3 saran konkret yang menghubungkan income, expense, dan goals mereka. 
-    - Contoh: 'Karena budget makan sudah over, kurangi jajan minggu ini demi mencapai target Tabungan Rumah.'
+4.  **Kewajiban Pinjaman (Loans)**: 
+    - Ingatkan status cicilan pinjaman (Loans) yang aktif, seperti sisa hutang dan beban per bulan.
+5.  **Tagihan Rutin (Recurring)**: 
+    - Soroti tagihan rutin lainnya (Recurring) seperti BPJS, langganan, dll agar pembayaran lancar.
+6.  **Rekomendasi Strategis (Actionable Insights)**:
+    - Berikan 3 saran konkret yang menghubungkan income, expense, hutang, dan goals mereka. 
+    - Contoh: 'Karena hutang kartu kredit bulan ini cukup besar, tunda dulu nabung liburan untuk tutup cicilan pokoknya.'
 
 Gunakan format markdown yang rapi. Jadilah konsultan keuangan pribadi mereka.";
     }

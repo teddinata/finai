@@ -27,6 +27,7 @@ class CategoryParentMappingSeeder extends Seeder
             'Asuransi',
             'Pajak',
             'Perawatan Kendaraan',
+            'Cicilan & Utang',
         ];
 
         $wantsCategories = [
@@ -40,7 +41,6 @@ class CategoryParentMappingSeeder extends Seeder
 
         $savingsCategories = [
             'Investasi',
-            'Cicilan & Utang',
         ];
 
         // Update needs

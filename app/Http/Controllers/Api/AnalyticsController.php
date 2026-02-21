@@ -142,6 +142,21 @@ class AnalyticsController extends Controller
             ];
         });
 
+        // 5. Loans (Active)
+        $loans = \App\Models\Loan::where('household_id', $household->id)
+            ->where('status', 'active')
+            ->get()
+            ->map(function ($loan) {
+            return [
+            'name' => $loan->name,
+            'total_amount' => $loan->total_amount,
+            'paid_amount' => $loan->paid_amount,
+            'remaining_amount' => $loan->total_amount - $loan->paid_amount,
+            'installment' => $loan->installment_amount,
+            'next_payment' => $loan->next_payment_date ?\Carbon\Carbon::parse($loan->next_payment_date)->format('Y-m-d') : 'N/A',
+            ];
+        });
+
         $data = [
             'period' => $periodLabel,
             'summary' => [
@@ -155,6 +170,7 @@ class AnalyticsController extends Controller
             'savings_goals' => $savings,
             'investments' => $investmentSummary,
             'recurring_transactions' => $recurring,
+            'loans' => $loans,
         ];
 
         $analysis = $this->aiService->analyze($data, $periodLabel);
