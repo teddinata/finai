@@ -30,7 +30,7 @@ class BudgetRule extends Model
 
     public function getFormattedIncomeTarget(): string
     {
-        return 'Rp ' . number_format($this->monthly_income_target , 0, ',', '.');
+        return 'Rp ' . number_format($this->monthly_income_target, 0, ',', '.');
     }
 
     /**
@@ -38,15 +38,21 @@ class BudgetRule extends Model
      */
     public function getAllocationAmounts(): array
     {
+        return $this->getAllocationAmountsDynamic($this->monthly_income_target);
+    }
+
+    /**
+     * Calculate budget allocation dynamically based on actual income
+     */
+    public function getAllocationAmountsDynamic(int $totalIncome): array
+    {
         $result = [];
         foreach ($this->allocations as $slug => $percentage) {
+            $amount = round($totalIncome * ($percentage / 100));
             $result[$slug] = [
                 'percentage' => $percentage,
-                'amount' => round($this->monthly_income_target * ($percentage / 100)),
-                'formatted_amount' => 'Rp ' . number_format(
-                    ($this->monthly_income_target * ($percentage )) , 
-                    0, ',', '.'
-                ),
+                'amount' => $amount,
+                'formatted_amount' => 'Rp ' . number_format($amount, 0, ',', '.'),
             ];
         }
         return $result;

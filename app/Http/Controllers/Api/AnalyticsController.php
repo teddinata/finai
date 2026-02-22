@@ -277,24 +277,21 @@ class AnalyticsController extends Controller
             ];
         });
 
-        $accountBreakdown = Transaction::forHousehold($household->id)
-            ->whereBetween('tanggal', [$startDate, $endDate])
-            ->select('account_id', DB::raw('SUM(total) as total'), DB::raw('COUNT(*) as count'))
-            ->with('account:id,name,icon,color')
-            ->whereNotNull('account_id')
-            ->groupBy('account_id')
+        // Accounts breakdown (Current balances)
+        $accountBreakdown = \App\Models\Account::where('household_id', $household->id)
+            ->where('is_active', true)
+            ->select('id', 'name', 'icon', 'color', 'current_balance')
             ->get()
-            ->map(function ($item) {
+            ->map(function ($account) {
             return [
             'account' => [
-            'id' => $item->account->id,
-            'name' => $item->account->name,
-            'icon' => $item->account->icon,
-            'color' => $item->account->color,
+            'id' => $account->id,
+            'name' => $account->name,
+            'icon' => $account->icon,
+            'color' => $account->color,
             ],
-            'total' => $item->total,
-            'formatted_total' => 'Rp ' . number_format($item->total / 100, 0, ',', '.'),
-            'count' => $item->count,
+            'total' => $account->current_balance,
+            'formatted_total' => 'Rp ' . number_format($account->current_balance, 0, ',', '.'),
             ];
         });
 

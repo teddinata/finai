@@ -19,7 +19,7 @@ class BudgetController extends Controller
     public function overview(Request $request)
     {
         $household = $request->user()->household;
-        
+
         $validated = $request->validate([
             'month' => 'nullable|integer|min:1|max:12',
             'year' => 'nullable|integer|min:2020',
@@ -42,38 +42,11 @@ class BudgetController extends Controller
             ]);
         }
 
-        // Get parent categories with spending
-        $parentCategories = ParentCategory::orderBy('sort_order')->get();
-        $allocations = $budgetRule->getAllocationAmounts();
-        
-        $budgetData = $parentCategories->map(function ($parent) use ($household, $startDate, $endDate, $allocations) {
-            $spending = $parent->getTotalSpending(
-                $household->id, 
-                $startDate->toDateString(), 
-                $endDate->toDateString()
-            );
-
-            $allocation = $allocations[$parent->slug] ?? null;
-            
-            return [
-                'id' => $parent->id,
-                'name' => $parent->name,
-                'slug' => $parent->slug,
-                'icon' => $parent->icon,
-                'color' => $parent->color,
-                'allocated_percentage' => $allocation['percentage'] ?? 0,
-                'allocated_amount' => $allocation['amount'] ?? 0,
-                'formatted_allocated' => $allocation['formatted_amount'] ?? 'Rp 0',
-                'spent_amount' => $spending,
-                'formatted_spent' => 'Rp ' . number_format($spending , 0, ',', '.'),
-                'remaining_amount' => ($allocation['amount'] ?? 0) - $spending,
-                'formatted_remaining' => 'Rp ' . number_format((($allocation['amount'] ?? 0) - $spending) , 0, ',', '.'),
-                'usage_percentage' => $allocation && $allocation['amount'] > 0 
-                    ? round(($spending / $allocation['amount']) , 1) 
-                    : 0,
-                'is_exceeded' => $allocation && $spending > $allocation['amount'],
-            ];
-        });
+        // Total income (Calculate first so we can use it as the budget target)
+        $totalIncome = Transaction::where('household_id', $household->id)
+            ->where('type', 'income')
+            ->whereBetween('tanggal', [$startDate, $endDate])
+            ->sum('total');
 
         // Total spending
         $totalSpent = Transaction::where('household_id', $household->id)
@@ -81,19 +54,47 @@ class BudgetController extends Controller
             ->whereBetween('tanggal', [$startDate, $endDate])
             ->sum('total');
 
-        // Total income
-        $totalIncome = Transaction::where('household_id', $household->id)
-            ->where('type', 'income')
-            ->whereBetween('tanggal', [$startDate, $endDate])
-            ->sum('total');
+        // Get parent categories with spending
+        $parentCategories = ParentCategory::orderBy('sort_order')->get();
+        // Dynamically compute allocations based on actual income
+        $allocations = $budgetRule->getAllocationAmountsDynamic($totalIncome);
+
+        $budgetData = $parentCategories->map(function ($parent) use ($household, $startDate, $endDate, $allocations) {
+            $spending = $parent->getTotalSpending(
+                $household->id,
+                $startDate->toDateString(),
+                $endDate->toDateString()
+            );
+
+            $allocation = $allocations[$parent->slug] ?? null;
+
+            return [
+            'id' => $parent->id,
+            'name' => $parent->name,
+            'slug' => $parent->slug,
+            'icon' => $parent->icon,
+            'color' => $parent->color,
+            'allocated_percentage' => $allocation['percentage'] ?? 0,
+            'allocated_amount' => $allocation['amount'] ?? 0,
+            'formatted_allocated' => $allocation['formatted_amount'] ?? 'Rp 0',
+            'spent_amount' => $spending,
+            'formatted_spent' => 'Rp ' . number_format($spending, 0, ',', '.'),
+            'remaining_amount' => ($allocation['amount'] ?? 0) - $spending,
+            'formatted_remaining' => 'Rp ' . number_format((($allocation['amount'] ?? 0) - $spending), 0, ',', '.'),
+            'usage_percentage' => $allocation && $allocation['amount'] > 0
+            ? round(($spending / $allocation['amount']), 1)
+            : 0,
+            'is_exceeded' => $allocation && $spending > $allocation['amount'],
+            ];
+        });
 
         return response()->json([
             'has_budget' => true,
             'budget_rule' => [
                 'id' => $budgetRule->id,
                 'name' => $budgetRule->name,
-                'monthly_income_target' => $budgetRule->monthly_income_target,
-                'formatted_income_target' => $budgetRule->getFormattedIncomeTarget(),
+                'monthly_income_target' => $totalIncome, // Mocked for frontend payload compatibility
+                'formatted_income_target' => 'Rp ' . number_format($totalIncome, 0, ',', '.'),
                 'allocations' => $budgetRule->allocations,
             ],
             'period' => [
@@ -104,18 +105,18 @@ class BudgetController extends Controller
             ],
             'summary' => [
                 'total_income' => $totalIncome,
-                'formatted_total_income' => 'Rp ' . number_format($totalIncome , 0, ',', '.'),
+                'formatted_total_income' => 'Rp ' . number_format($totalIncome, 0, ',', '.'),
                 'total_spent' => $totalSpent,
-                'formatted_total_spent' => 'Rp ' . number_format($totalSpent , 0, ',', '.'),
-                'budget_target' => $budgetRule->monthly_income_target,
-                'formatted_budget_target' => $budgetRule->getFormattedIncomeTarget(),
-                'remaining_budget' => $budgetRule->monthly_income_target - $totalSpent,
+                'formatted_total_spent' => 'Rp ' . number_format($totalSpent, 0, ',', '.'),
+                'budget_target' => $totalIncome,
+                'formatted_budget_target' => 'Rp ' . number_format($totalIncome, 0, ',', '.'),
+                'remaining_budget' => $totalIncome - $totalSpent,
                 'formatted_remaining' => 'Rp ' . number_format(
-                    ($budgetRule->monthly_income_target - $totalSpent) , 0, ',', '.'
-                ),
-                'usage_percentage' => $budgetRule->monthly_income_target > 0 
-                    ? round(($totalSpent / $budgetRule->monthly_income_target) , 1) 
-                    : 0,
+                ($totalIncome - $totalSpent), 0, ',', '.'
+            ),
+                'usage_percentage' => $totalIncome > 0
+                ? round(($totalSpent / $totalIncome) * 100, 1)
+                : 0,
             ],
             'categories' => $budgetData,
         ]);
@@ -130,7 +131,7 @@ class BudgetController extends Controller
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'monthly_income_target' => 'required|integer|min:0',
+            'monthly_income_target' => 'nullable|integer|min:0', // Optional now, since it's dynamic
             'allocations' => 'required|array',
             'allocations.needs' => 'required|integer|min:0|max:100',
             'allocations.wants' => 'required|integer|min:0|max:100',
@@ -233,36 +234,36 @@ class BudgetController extends Controller
         $limits = BudgetLimit::where('household_id', $household->id)
             ->where('is_active', true)
             ->where('start_date', '<=', $endDate)
-            ->where(function($q) use ($startDate) {
-                $q->whereNull('end_date')
-                  ->orWhere('end_date', '>=', $startDate);
-            })
+            ->where(function ($q) use ($startDate) {
+            $q->whereNull('end_date')
+                ->orWhere('end_date', '>=', $startDate);
+        })
             ->with(['category', 'parentCategory'])
             ->get()
             ->map(function ($limit) {
-                return [
-                    'id' => $limit->id,
-                    'category' => $limit->category ? [
-                        'id' => $limit->category->id,
-                        'name' => $limit->category->name,
-                        'icon' => $limit->category->icon,
-                        'color' => $limit->category->color,
-                    ] : null,
-                    'parent_category' => $limit->parentCategory ? [
-                        'id' => $limit->parentCategory->id,
-                        'name' => $limit->parentCategory->name,
-                    ] : null,
-                    'limit_amount' => $limit->limit_amount,
-                    'formatted_limit' => $limit->getFormattedLimit(),
-                    'spent_amount' => $limit->getCurrentSpending(),
-                    'formatted_spent' => 'Rp ' . number_format($limit->getCurrentSpending() , 0, ',', '.'),
-                    'remaining' => $limit->getRemainingBudget(),
-                    'formatted_remaining' => 'Rp ' . number_format($limit->getRemainingBudget() , 0, ',', '.'),
-                    'usage_percentage' => $limit->getUsagePercentage(),
-                    'is_exceeded' => $limit->isExceeded(),
-                    'period_type' => $limit->period_type,
-                ];
-            });
+            return [
+            'id' => $limit->id,
+            'category' => $limit->category ? [
+            'id' => $limit->category->id,
+            'name' => $limit->category->name,
+            'icon' => $limit->category->icon,
+            'color' => $limit->category->color,
+            ] : null,
+            'parent_category' => $limit->parentCategory ? [
+            'id' => $limit->parentCategory->id,
+            'name' => $limit->parentCategory->name,
+            ] : null,
+            'limit_amount' => $limit->limit_amount,
+            'formatted_limit' => $limit->getFormattedLimit(),
+            'spent_amount' => $limit->getCurrentSpending(),
+            'formatted_spent' => 'Rp ' . number_format($limit->getCurrentSpending(), 0, ',', '.'),
+            'remaining' => $limit->getRemainingBudget(),
+            'formatted_remaining' => 'Rp ' . number_format($limit->getRemainingBudget(), 0, ',', '.'),
+            'usage_percentage' => $limit->getUsagePercentage(),
+            'is_exceeded' => $limit->isExceeded(),
+            'period_type' => $limit->period_type,
+            ];
+        });
 
         return response()->json([
             'limits' => $limits,
