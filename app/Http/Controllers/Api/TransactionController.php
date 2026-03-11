@@ -25,23 +25,27 @@ class TransactionController extends Controller
                            ->with(['category', 'creator', 'items']);
 
         // Filters
-        if ($request->has('category_id')) {
+        if ($request->filled('account_id')) {
+            $query->where('account_id', $request->account_id);
+        }
+
+        if ($request->filled('category_id')) {
             $query->where('category_id', $request->category_id);
         }
 
-        if ($request->has('source')) {
+        if ($request->filled('source')) {
             $query->where('source', $request->source);
         }
 
-        if ($request->has('metode_pembayaran')) {
+        if ($request->filled('metode_pembayaran')) {
             $query->where('metode_pembayaran', $request->metode_pembayaran);
         }
 
-        if ($request->has('start_date')) {
+        if ($request->filled('start_date')) {
             $query->where('tanggal', '>=', $request->start_date);
         }
 
-        if ($request->has('end_date')) {
+        if ($request->filled('end_date')) {
             $query->where('tanggal', '<=', $request->end_date);
         }
 
