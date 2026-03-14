@@ -25,6 +25,10 @@ class TransactionController extends Controller
                            ->with(['category', 'creator', 'items']);
 
         // Filters
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+
         if ($request->filled('account_id')) {
             $query->where('account_id', $request->account_id);
         }
