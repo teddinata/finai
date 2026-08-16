@@ -282,6 +282,29 @@ class XenditService
     }
 
     /**
+     * Render QRIS string jadi SVG.
+     *
+     * QRIS wajib di-encode sebagai byte mode: string-nya mengandung huruf kecil
+     * dan titik, yang tidak ada di charset alfanumerik QR. Library klien yang
+     * memilih mode alfanumerik akan menghasilkan QR yang tergambar rapi tapi
+     * datanya rusak, dan ditolak aplikasi pembayaran. Merender di server
+     * menghilangkan seluruh kelas bug itu.
+     */
+    public function renderQrSvg(string $qrString, int $size = 320): string
+    {
+        $renderer = new \BaconQrCode\Renderer\ImageRenderer(
+            new \BaconQrCode\Renderer\RendererStyle\RendererStyle($size, 1),
+            new \BaconQrCode\Renderer\Image\SvgImageBackEnd()
+        );
+
+        return (new \BaconQrCode\Writer($renderer))->writeString(
+            $qrString,
+            \BaconQrCode\Encoder\Encoder::DEFAULT_BYTE_MODE_ENCODING,
+            \BaconQrCode\Common\ErrorCorrectionLevel::M()
+        );
+    }
+
+    /**
      * Ubah 08xxx / 628xxx / +628xxx menjadi format E.164 yang diminta Xendit.
      */
     protected function normalizeMobileNumber(?string $mobileNumber): ?string
@@ -363,6 +386,10 @@ class XenditService
             'qris_id' => $result['id'],
             'qr_string' => $qrString,
             'payment_method_id' => $paymentMethodId, // ✅ RETURN
+            // QR jadi dirender server, klien tinggal pasang di <img src>
+            'qr_image' => $qrString
+                ? 'data:image/svg+xml;base64,' . base64_encode($this->renderQrSvg($qrString))
+                : null,
         ];
     }
 
