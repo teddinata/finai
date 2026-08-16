@@ -25,6 +25,17 @@ return [
     */
 
     'webhook_token' => env('XENDIT_WEBHOOK_TOKEN'),
+
+    /*
+    | Xendit menerbitkan callback token yang berbeda per endpoint webhook, jadi
+    | satu token saja bikin channel lain ditolak 401 dan di-retry terus.
+    | Isi XENDIT_WEBHOOK_TOKENS dengan semua token, dipisah koma.
+    */
+    'webhook_tokens' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string)env('XENDIT_WEBHOOK_TOKENS', ''))
+    ), fn($token) => $token !== '')),
+
     'webhook_url' => env('APP_URL') . '/api/webhooks/xendit',
 
     /*

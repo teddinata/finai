@@ -117,7 +117,7 @@ class Subscription extends Model
         return now()->diffInDays($this->expires_at, false);
     }
 
-    public function cancel(string $reason = null): bool
+    public function cancel(?string $reason = null): bool
     {
         $this->update([
             'status' => 'canceled',

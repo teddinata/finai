@@ -119,7 +119,7 @@ class Payment extends Model
         return $this->status === 'expired';
     }
 
-    public function markAsPaid(string $paymentGatewayId = null, array $metadata = []): bool
+    public function markAsPaid(?string $paymentGatewayId = null, array $metadata = []): bool
     {
         return $this->update([
             'status' => 'paid',

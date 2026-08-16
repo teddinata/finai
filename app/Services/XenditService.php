@@ -192,7 +192,7 @@ class XenditService
     /**
      * Create E-Wallet Charge using Payment Request API
      */
-    public function createEWalletCharge(Payment $payment, string $ewalletType = 'OVO')
+    public function createEWalletCharge(Payment $payment, string $ewalletType = 'OVO', ?string $mobileNumber = null)
     {
         $this->initXendit();
 
@@ -205,12 +205,27 @@ class XenditService
 
         $referenceId = 'EWALLET-' . $payment->id;
 
+        $channelProperties = [
+            'success_return_url' => config('xendit.success_redirect_url'),
+            'failure_return_url' => config('xendit.failure_redirect_url'),
+        ];
+
+        // OVO memakai push notification ke nomor HP, bukan redirect, jadi
+        // mobile_number wajib. Tanpa ini Xendit menolak:
+        // "Invalid channel_properties for ID_OVO".
+        if ($ewalletType === 'OVO') {
+            $mobileNumber = $this->normalizeMobileNumber($mobileNumber);
+
+            if (!$mobileNumber) {
+                throw new \Exception('Nomor HP OVO wajib diisi (format: 08xxx atau +628xxx).');
+            }
+
+            $channelProperties['mobile_number'] = $mobileNumber;
+        }
+
         $ewalletParams = new \Xendit\PaymentRequest\EWalletParameters([
             'channel_code' => $ewalletType,
-            'channel_properties' => new \Xendit\PaymentRequest\EWalletChannelProperties([
-                'success_return_url' => config('xendit.success_redirect_url'),
-                'failure_return_url' => config('xendit.failure_redirect_url'),
-            ]),
+            'channel_properties' => new \Xendit\PaymentRequest\EWalletChannelProperties($channelProperties),
         ]);
 
         $paymentMethodParams = new \Xendit\PaymentRequest\PaymentMethodParameters([
@@ -264,6 +279,32 @@ class XenditService
             'checkout_url' => $checkoutUrl,
             'payment_method_id' => $paymentMethodId, // ✅ RETURN
         ];
+    }
+
+    /**
+     * Ubah 08xxx / 628xxx / +628xxx menjadi format E.164 yang diminta Xendit.
+     */
+    protected function normalizeMobileNumber(?string $mobileNumber): ?string
+    {
+        $digits = preg_replace('/\D/', '', (string)$mobileNumber);
+
+        if ($digits === '') {
+            return null;
+        }
+
+        if (str_starts_with($digits, '0')) {
+            $digits = '62' . substr($digits, 1);
+        }
+        elseif (!str_starts_with($digits, '62')) {
+            $digits = '62' . $digits;
+        }
+
+        // 62 + 9..12 digit nomor Indonesia
+        if (strlen($digits) < 11 || strlen($digits) > 14) {
+            return null;
+        }
+
+        return '+' . $digits;
     }
 
     /**
@@ -336,18 +377,107 @@ class XenditService
     }
 
     /**
+     * Reconcile a pending payment straight from Xendit.
+     *
+     * Webhooks are configured per event type in the Xendit dashboard, so a
+     * channel whose URL is missing (QRIS is the usual one) never reports back
+     * and the payment is stuck on 'pending' forever. Polling the API closes
+     * that gap without depending on the dashboard config.
+     */
+    public function syncPaymentStatus(Payment $payment): Payment
+    {
+        if (!$payment->isPending() || !$payment->payment_gateway_id) {
+            return $payment;
+        }
+
+        try {
+            $this->initXendit();
+
+            if ($payment->payment_method === 'invoice') {
+                $result = $this->invoiceApi->getInvoiceById($payment->payment_gateway_id);
+                $status = strtoupper($result['status'] ?? '');
+                $channel = $result['payment_channel'] ?? 'INVOICE';
+                $paidAmount = $result['paid_amount'] ?? $payment->total;
+            }
+            else {
+                $result = $this->getPaymentRequest($payment->payment_gateway_id);
+                $status = strtoupper($result['status'] ?? '');
+                $channel = $result['payment_method']['type'] ?? strtoupper((string)$payment->payment_method);
+                $paidAmount = $result['amount'] ?? $payment->total;
+            }
+        }
+        catch (\Throwable $e) {
+            Log::warning('Xendit status sync failed', [
+                'payment_id' => $payment->id,
+                'gateway_id' => $payment->payment_gateway_id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $payment;
+        }
+
+        Log::info('Xendit status sync', [
+            'payment_id' => $payment->id,
+            'gateway_id' => $payment->payment_gateway_id,
+            'remote_status' => $status,
+        ]);
+
+        switch ($status) {
+            case 'SUCCEEDED':
+            case 'PAID':
+            case 'SETTLED':
+            case 'CAPTURED':
+                $this->handlePaymentSuccess($payment, [
+                    'id' => $payment->payment_gateway_id,
+                    'payment_channel' => $channel,
+                    'paid_amount' => $paidAmount,
+                    'synced_from_api' => true,
+                ]);
+                break;
+
+            case 'FAILED':
+                $this->handlePaymentFailed($payment, [
+                    'failure_code' => $result['failure_code'] ?? 'unknown',
+                ]);
+                break;
+
+            case 'EXPIRED':
+            case 'VOIDED':
+            case 'CANCELED':
+                $payment->update([
+                    'status' => 'expired',
+                    'metadata' => array_merge($payment->metadata ?? [], [
+                        'expired_at' => now()->toIso8601String(),
+                        'expired_source' => 'api_sync',
+                    ]),
+                ]);
+                break;
+        }
+
+        return $payment->fresh();
+    }
+
+    /**
      * Verify Webhook Token
      */
     public function verifyWebhookToken(string $token): bool
     {
-        $expectedToken = config('xendit.webhook_token');
+        $expectedTokens = config('xendit.webhook_tokens', []);
+        $expectedTokens[] = config('xendit.webhook_token');
+        $expectedTokens = array_filter(array_map(fn($t) => trim((string)$t), $expectedTokens));
 
-        if (empty($expectedToken)) {
+        if (empty($expectedTokens)) {
             Log::warning('Xendit webhook token not configured');
             return false;
         }
 
-        return hash_equals($expectedToken, $token);
+        foreach ($expectedTokens as $expected) {
+            if (hash_equals($expected, $token)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -385,10 +515,13 @@ class XenditService
             'paid_amount' => $paidAmount,
         ]);
 
-        $payment->markAsPaid($xenditData['id'], [
+        // Keep payment_gateway_id pointing at the Payment Request (pr-xxx) so the
+        // record stays resolvable/syncable; the webhook's own id goes to metadata.
+        $payment->markAsPaid(null, [
             'paid_via' => $paidVia,
             'paid_amount' => $paidAmount,
             'xendit_fee' => $xenditData['xendit_fee'] ?? 0,
+            'xendit_payment_id' => $xenditData['id'] ?? null,
             'payment_id' => $xenditData['payment_id'] ?? null,
             'webhook_received_at' => now()->toIso8601String(),
         ]);
