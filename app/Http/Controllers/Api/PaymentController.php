@@ -37,6 +37,8 @@ class PaymentController extends Controller
             'payment_method' => 'required|in:invoice,virtual_account,ewallet,qris',
             'bank_code' => 'required_if:payment_method,virtual_account|in:BNI,BRI,MANDIRI,PERMATA,BCA',
             'ewallet_type' => 'required_if:payment_method,ewallet|in:OVO,DANA,LINKAJA,SHOPEEPAY',
+            // OVO memakai push notification ke nomor HP, jadi Xendit mewajibkannya
+            'mobile_number' => 'required_if:ewallet_type,OVO|nullable|string|max:20',
             'voucher_code' => 'nullable|string|max:50',
         ]);
 
@@ -120,7 +122,7 @@ class PaymentController extends Controller
                 $result = match ($request->payment_method) {
                         'invoice' => $this->createInvoicePayment($payment, $user),
                         'virtual_account' => $this->createVAPayment($payment, $request->bank_code),
-                        'ewallet' => $this->createEWalletPayment($payment, $request->ewallet_type),
+                        'ewallet' => $this->createEWalletPayment($payment, $request->ewallet_type, $request->mobile_number),
                         'qris' => $this->createQRISPayment($payment),
                         default => throw new \Exception('Invalid payment method'),
                     };
@@ -208,9 +210,10 @@ class PaymentController extends Controller
 
     /**
      * Get payment status
-     * 
-     * Note: Status updates are handled by Xendit webhooks.
-     * This endpoint just returns the current payment state from DB.
+     *
+     * Status updates normally arrive via Xendit webhooks. A pending payment is
+     * also reconciled against the Xendit API here, so a channel whose webhook
+     * URL is missing in the dashboard (QRIS most often) still settles.
      */
     public function status(Request $request, Payment $payment)
     {
@@ -218,9 +221,13 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        if ($payment->isPending()) {
+            $payment = $this->xenditService->syncPaymentStatus($payment);
+        }
+
         return response()->json([
             'success' => true,
-            'payment' => $this->formatPaymentResponse($payment->load(['subscription.plan', 'voucher'])->fresh()),
+            'payment' => $this->formatPaymentResponse($payment->load(['subscription.plan', 'voucher'])),
         ]);
     }
 
@@ -357,9 +364,9 @@ class PaymentController extends Controller
         return $this->xenditService->createVirtualAccount($payment, $bankCode);
     }
 
-    private function createEWalletPayment(Payment $payment, $ewalletType)
+    private function createEWalletPayment(Payment $payment, $ewalletType, $mobileNumber = null)
     {
-        return $this->xenditService->createEWalletCharge($payment, $ewalletType);
+        return $this->xenditService->createEWalletCharge($payment, $ewalletType, $mobileNumber);
     }
 
     private function createQRISPayment(Payment $payment)

@@ -32,20 +32,19 @@ class WebhookController extends Controller
             'body' => $request->all(),
         ]);
 
-        // Verify webhook token - gunakan cara proven works dari gascpns
+        // Verify webhook token
         $callbackToken = $request->header('X-CALLBACK-TOKEN');
-        // $expectedToken = env('XENDIT_WEBHOOK_TOKEN');
-        $expectedToken = config('xendit.webhook_token');
 
         Log::info('Webhook token verification', [
-            'received' => $callbackToken,
-            'expected' => $expectedToken,
-            'match' => $callbackToken === $expectedToken,
+            'received' => $this->maskToken($callbackToken),
+            'accepted_tokens' => count($this->acceptedCallbackTokens()),
+            'match' => $this->isValidCallbackToken($callbackToken),
         ]);
 
-        if ($callbackToken !== $expectedToken) {
+        if (!$this->isValidCallbackToken($callbackToken)) {
             Log::warning('Invalid Xendit webhook token', [
-                'token_received' => $callbackToken,
+                'token_received' => $this->maskToken($callbackToken),
+                'hint' => 'Tambahkan token endpoint ini ke XENDIT_WEBHOOK_TOKENS',
             ]);
             return response()->json(['error' => 'Unauthorized'], 401);
         }
@@ -71,6 +70,56 @@ class WebhookController extends Controller
 
             return response()->json(['error' => 'Internal server error'], 500);
         }
+    }
+
+    /**
+     * Semua callback token yang diterima.
+     *
+     * Xendit memberi token berbeda per endpoint webhook (QR Code, Payments,
+     * Payment Method, FVA), jadi token yang tidak terdaftar akan dibalas 401
+     * dan di-retry terus-menerus oleh Xendit.
+     */
+    protected function acceptedCallbackTokens(): array
+    {
+        $tokens = config('xendit.webhook_tokens', []);
+
+        if (!is_array($tokens)) {
+            $tokens = [$tokens];
+        }
+
+        $tokens[] = config('xendit.webhook_token');
+
+        return array_values(array_unique(array_filter(
+            array_map(fn($token) => trim((string)$token), $tokens),
+            fn($token) => $token !== ''
+        )));
+    }
+
+    protected function isValidCallbackToken(?string $token): bool
+    {
+        if ($token === null || $token === '') {
+            return false;
+        }
+
+        foreach ($this->acceptedCallbackTokens() as $expected) {
+            if (hash_equals($expected, $token)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Jangan pernah tulis callback token utuh ke log.
+     */
+    protected function maskToken(?string $token): string
+    {
+        if ($token === null || $token === '') {
+            return '(empty)';
+        }
+
+        return substr($token, 0, 4) . '...' . substr($token, -4);
     }
 
     // =========================================================================
@@ -106,6 +155,9 @@ class WebhookController extends Controller
                 // Virtual Account events
                 str_starts_with($event, 'fva.') ||
                 str_starts_with($event, 'virtual_account.') => $this->handleVirtualAccountWebhook($data),
+
+                // Payment Method lifecycle (activated/expired) - bukan event pembayaran
+                str_starts_with($event, 'payment_method.') => $this->handlePaymentMethodWebhook($event, $data),
 
                 // Payment Request events (Xendit V2 unified)
                 str_starts_with($event, 'payment.') => $this->handlePaymentRequestWebhook($data),
@@ -185,8 +237,13 @@ class WebhookController extends Controller
         }
 
         // Priority 3: Cek by payment_gateway_id (Xendit ID)
-        $xenditId = $data['id'] ?? null;
-        if ($xenditId) {
+        // payment_request_id ikut dicek: payload QRIS/payment.* memakai data.id
+        // untuk id pembayaran, sedangkan pr-xxx ada di payment_request_id.
+        $xenditIds = array_filter([
+            $data['id'] ?? null,
+            $data['payment_request_id'] ?? null,
+        ]);
+        foreach ($xenditIds as $xenditId) {
             $payment = Payment::where('payment_gateway_id', $xenditId)->first();
             if ($payment) {
                 Log::info('Payment found by payment_gateway_id', [
@@ -196,6 +253,41 @@ class WebhookController extends Controller
                 return $payment;
             }
         }
+
+        // Priority 3b: Cek by payment method id (pm-xxx) yang disimpan di metadata.
+        // Webhook QR Code / payment_method.* mengirim pm-xxx (kadang sebagai qr_id)
+        // dan reference_id-nya milik Xendit, bukan reference_id kita.
+        $paymentMethodIds = array_filter([
+            $data['payment_method']['id'] ?? null,
+            $data['payment_method_id'] ?? null,
+            $data['qr_id'] ?? null,
+            $data['id'] ?? null,
+        ]);
+        foreach ($paymentMethodIds as $pmId) {
+            $payment = Payment::where('metadata->payment_method_id', $pmId)->first();
+            if ($payment) {
+                Log::info('Payment found by payment_method_id in metadata', [
+                    'payment_id' => $payment->id,
+                    'payment_method_id' => $pmId,
+                ]);
+                return $payment;
+            }
+        }
+
+        // Priority 3c: reference_id yang bersarang di objek payment_method
+        $nestedReferenceId = $data['payment_method']['reference_id'] ?? null;
+        if ($nestedReferenceId) {
+            $payment = Payment::where('payment_token', $nestedReferenceId)->first();
+            if ($payment) {
+                Log::info('Payment found by nested payment_method.reference_id', [
+                    'payment_id' => $payment->id,
+                    'reference_id' => $nestedReferenceId,
+                ]);
+                return $payment;
+            }
+        }
+
+        $xenditId = $data['id'] ?? null;
 
         // Priority 4: Fallback - coba extract ID dari prefix (backward compatibility)
         $prefixes = ['PAYMENT-', 'VA-', 'EWALLET-', 'QRIS-'];
@@ -483,8 +575,44 @@ class WebhookController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /**
+     * Handle Payment Method lifecycle webhook (payment_method.activated / .expired)
+     *
+     * Bukan event pembayaran - QRIS mengirim ini saat QR selesai dibuat.
+     * Simpan pm-xxx ke metadata supaya webhook pembayaran berikutnya (yang
+     * reference_id-nya milik Xendit) tetap bisa dicocokkan ke payment kita.
+     */
+    protected function handlePaymentMethodWebhook(string $event, array $data)
+    {
+        $payment = $this->findPayment($data);
+
+        if ($payment && !$payment->isPaid()) {
+            $payment->update([
+                'metadata' => array_merge($payment->metadata ?? [], [
+                    'payment_method_id' => $data['id'] ?? ($payment->metadata['payment_method_id'] ?? null),
+                    'payment_method_reference_id' => $data['reference_id'] ?? null,
+                    'payment_method_status' => $data['status'] ?? null,
+                ]),
+            ]);
+        }
+
+        Log::info('Payment method lifecycle event', [
+            'event' => $event,
+            'payment_method_id' => $data['id'] ?? null,
+            'type' => $data['type'] ?? null,
+            'status' => $data['status'] ?? null,
+            'payment_id' => $payment->id ?? null,
+        ]);
+
+        return response()->json(['success' => true]);
+    }
+
     protected function handlePaymentRequestWebhook(array $data)
     {
+        // Payments API v3 memakai nama field berbeda dari Payment Request API v2
+        $data['id'] = $data['id'] ?? $data['payment_id'] ?? null;
+        $data['amount'] = $data['amount'] ?? $data['request_amount'] ?? null;
+
         // ✅ TAMBAHKAN: Log detail lengkap
         Log::info('=== PAYMENT REQUEST WEBHOOK DETAILS ===', [
             'full_data' => $data,
@@ -500,7 +628,7 @@ class WebhookController extends Controller
             Log::warning('Payment not found for payment request webhook', [
                 'reference_id' => $data['reference_id'] ?? null,
                 'id' => $data['id'] ?? null,
-                'all_payments' => Payment::select('id', 'payment_token', 'payment_gateway_id')->get()->toArray(),
+                'payment_request_id' => $data['payment_request_id'] ?? null,
             ]);
             return response()->json(['success' => true, 'message' => 'Payment not found, skipped']);
         }
@@ -522,12 +650,14 @@ class WebhookController extends Controller
         Log::info('Processing payment request webhook', [
             'payment_id' => $payment->id,
             'status' => $status,
-            'will_mark_as_paid' => in_array($status, ['SUCCEEDED', 'PAID']),
+            'will_mark_as_paid' => in_array($status, ['SUCCEEDED', 'PAID', 'CAPTURED', 'SETTLED']),
         ]);
 
         switch ($status) {
             case 'SUCCEEDED':
             case 'PAID':
+            case 'CAPTURED':
+            case 'SETTLED':
                 // ✅ TAMBAHKAN: Log sebelum handlePaymentSuccess
                 Log::info('Calling handlePaymentSuccess', [
                     'payment_id' => $payment->id,
@@ -536,7 +666,9 @@ class WebhookController extends Controller
 
                 $this->xenditService->handlePaymentSuccess($payment, [
                     'id' => $data['id'] ?? null,
-                    'payment_channel' => $data['payment_method']['type'] ?? 'unknown',
+                    'payment_channel' => $data['payment_method']['type']
+                        ?? $data['channel_code']
+                        ?? 'unknown',
                     'paid_amount' => $data['amount'] ?? $payment->total,
                 ]);
 
