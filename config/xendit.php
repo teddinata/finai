@@ -58,4 +58,21 @@ return [
 
     'invoice_duration' => 86400, // 24 hours in seconds
     'currency' => 'IDR',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Metode Pembayaran Aktif
+    |--------------------------------------------------------------------------
+    |
+    | Supaya channel yang sedang bermasalah bisa disembunyikan dari pengguna
+    | lewat .env, tanpa perlu deploy ulang. Contoh mematikan QRIS:
+    |
+    |   XENDIT_ENABLED_METHODS=invoice,virtual_account,ewallet
+    |
+    */
+
+    'enabled_payment_methods' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string)env('XENDIT_ENABLED_METHODS', 'invoice,virtual_account,ewallet,qris'))
+    ), fn($method) => $method !== '')),
 ];
