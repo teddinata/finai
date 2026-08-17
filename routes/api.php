@@ -100,6 +100,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', [PaymentController::class , 'create']);
             Route::get('/', [PaymentController::class , 'history']);
             Route::get('/{payment}', [PaymentController::class , 'status']);
+            Route::get('/{payment}/qr', [PaymentController::class , 'qrImage']);
             Route::post('/{payment}/cancel', [PaymentController::class , 'cancel']);
         }
         );

@@ -232,6 +232,31 @@ class PaymentController extends Controller
     }
 
     /**
+     * QR image untuk payment QRIS, dirender di server.
+     *
+     * Dipakai langsung sebagai <img src="..."> supaya klien tidak perlu
+     * meng-encode qr_string sendiri - salah mode encoding menghasilkan QR
+     * yang terlihat normal tapi ditolak aplikasi pembayaran.
+     */
+    public function qrImage(Request $request, Payment $payment)
+    {
+        if ($payment->household_id !== $request->user()->household_id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $qrString = $payment->metadata['qr_string'] ?? $payment->snap_token;
+
+        if ($payment->payment_method !== 'qris' || !$qrString) {
+            return response()->json(['message' => 'Payment has no QRIS code'], 404);
+        }
+
+        return response($this->xenditService->renderQrSvg($qrString), 200, [
+            'Content-Type' => 'image/svg+xml',
+            'Cache-Control' => 'private, max-age=300',
+        ]);
+    }
+
+    /**
      * Get payment history
      */
     public function history(Request $request)
