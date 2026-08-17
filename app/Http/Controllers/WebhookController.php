@@ -274,14 +274,21 @@ class WebhookController extends Controller
             }
         }
 
-        // Priority 3c: reference_id yang bersarang di objek payment_method
-        $nestedReferenceId = $data['payment_method']['reference_id'] ?? null;
-        if ($nestedReferenceId) {
-            $payment = Payment::where('payment_token', $nestedReferenceId)->first();
+        // Priority 3c: reference_id milik Xendit (bukan QRIS-{id} kita).
+        // Webhook qr.payment membawa reference_id payment method, yang sudah
+        // kita simpan saat event payment_method.activated masuk.
+        $xenditReferenceIds = array_filter([
+            $data['payment_method']['reference_id'] ?? null,
+            $referenceId,
+        ]);
+        foreach ($xenditReferenceIds as $xenditRefId) {
+            $payment = Payment::where('payment_token', $xenditRefId)
+                ->orWhere('metadata->payment_method_reference_id', $xenditRefId)
+                ->first();
             if ($payment) {
-                Log::info('Payment found by nested payment_method.reference_id', [
+                Log::info('Payment found by Xendit reference_id', [
                     'payment_id' => $payment->id,
-                    'reference_id' => $nestedReferenceId,
+                    'reference_id' => $xenditRefId,
                 ]);
                 return $payment;
             }
