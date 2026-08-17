@@ -290,10 +290,13 @@ class XenditService
      * datanya rusak, dan ditolak aplikasi pembayaran. Merender di server
      * menghilangkan seluruh kelas bug itu.
      */
-    public function renderQrSvg(string $qrString, int $size = 320): string
+    public function renderQrSvg(string $qrString, int $size = 512): string
     {
+        // Quiet zone WAJIB 4 modul - spesifikasi QR. Dengan margin lebih kecil
+        // banyak scanner gagal mengunci pola dan QR ditolak.
+        // Ukuran 512px menjaga tiap modul cukup besar untuk di-scan dari layar.
         $renderer = new \BaconQrCode\Renderer\ImageRenderer(
-            new \BaconQrCode\Renderer\RendererStyle\RendererStyle($size, 1),
+            new \BaconQrCode\Renderer\RendererStyle\RendererStyle($size, 4),
             new \BaconQrCode\Renderer\Image\SvgImageBackEnd()
         );
 

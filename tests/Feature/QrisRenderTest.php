@@ -32,4 +32,26 @@ class QrisRenderTest extends TestCase
         $this->assertStringContainsString('</svg>', $svg);
         $this->assertGreaterThan(1000, strlen($svg));
     }
+
+    /**
+     * Quiet zone di bawah 4 modul bikin scanner gagal mengunci pola QR.
+     */
+    public function test_qr_has_four_module_quiet_zone()
+    {
+        $svg = app(XenditService::class)->renderQrSvg($this->qrString);
+
+        $this->assertMatchesRegularExpression('/translate\(4,4\)/', $svg);
+    }
+
+    /**
+     * Tiap modul harus cukup besar untuk di-scan dari layar HP.
+     */
+    public function test_qr_modules_are_large_enough_to_scan()
+    {
+        $svg = app(XenditService::class)->renderQrSvg($this->qrString);
+
+        preg_match('/scale\(([\d.]+)\)/', $svg, $m);
+
+        $this->assertGreaterThanOrEqual(5.0, (float)$m[1]);
+    }
 }
