@@ -179,6 +179,40 @@ class QrisWebhookTest extends TestCase
     }
 
     /**
+     * qr.payment hanya membawa reference_id milik Xendit. Yang menyelamatkan
+     * adalah reference_id itu sudah disimpan saat payment_method.activated.
+     */
+    public function test_qr_payment_resolves_via_stored_xendit_reference_id()
+    {
+        $payment = $this->makeQrisPayment([
+            'metadata' => [
+                'payment_method' => 'qris',
+                'payment_method_reference_id' => '4fe2a72d-f27e-4464-9ed5-443f2f409d59',
+            ],
+        ]);
+
+        $this->sendWebhook([
+            'event' => 'qr.payment',
+            'business_id' => '6665cd2adfa0ef2680d0251c',
+            'created' => '2026-08-17T01:30:00Z',
+            'data' => [
+                'id' => 'qrpy_8182837te-87st-49ing-8696-1239bd4d759c',
+                'qr_id' => 'qr_8182837te-87st-49ing-8696-1239bd4d759c',
+                'amount' => 11120,
+                'status' => 'SUCCEEDED',
+                'type' => 'DYNAMIC',
+                'channel_code' => 'ID_DANA',
+                'reference_id' => '4fe2a72d-f27e-4464-9ed5-443f2f409d59',
+            ],
+        ])->assertStatus(200);
+
+        $this->assertDatabaseHas('payments', [
+            'id' => $payment->id,
+            'status' => 'paid',
+        ]);
+    }
+
+    /**
      * Xendit issues a different callback token per webhook endpoint. Any token
      * not on the accepted list gets a 401, which makes Xendit retry forever.
      */
