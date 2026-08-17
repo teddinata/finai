@@ -227,7 +227,7 @@ class PaymentController extends Controller
 
         return response()->json([
             'success' => true,
-            'payment' => $this->formatPaymentResponse($payment->load(['subscription.plan', 'voucher'])),
+            'payment' => $this->formatPaymentResponse($payment->load(['subscription.plan', 'voucher']), true),
         ]);
     }
 
@@ -353,9 +353,18 @@ class PaymentController extends Controller
     /**
      * Format payment response
      */
-    private function formatPaymentResponse(Payment $payment)
+    private function formatPaymentResponse(Payment $payment, bool $includeQrImage = false)
     {
+        $qrString = $payment->metadata['qr_string'] ?? null;
+
+        // Hanya di endpoint status - merender SVG untuk tiap baris di history
+        // cuma memperbesar response tanpa ada yang memakainya.
+        $qrImage = $includeQrImage && $payment->payment_method === 'qris' && $qrString
+            ? 'data:image/svg+xml;base64,' . base64_encode($this->xenditService->renderQrSvg($qrString))
+            : null;
+
         return [
+            'qr_image' => $qrImage,
             'id' => $payment->id,
             'subscription_id' => $payment->subscription_id,
             'amount' => $payment->amount,
