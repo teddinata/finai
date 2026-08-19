@@ -9,6 +9,10 @@ use Illuminate\Http\Request;
 
 class AccountController extends Controller
 {
+    public function __construct(private \App\Services\NetWorthService $netWorth)
+    {
+    }
+
     public function index(Request $request)
     {
         $household = $request->user()->household;
@@ -31,18 +35,23 @@ class AccountController extends Controller
                     'current_balance' => $account->current_balance,
                     'formatted_balance' => $account->getFormattedBalance(),
                     'include_in_total' => $account->include_in_total,
+                    'is_liability' => in_array(
+                        $account->type,
+                        \App\Services\NetWorthService::LIABILITY_TYPES,
+                        true
+                    ),
                 ];
             });
 
-        $totalBalance = Account::forHousehold($household->id)
-            ->active()
-            ->includedInTotal()
-            ->sum('current_balance');
+        // Kartu kredit dihitung sebagai utang, jadi total kas hanya dari akun aset.
+        $snapshot = $this->netWorth->snapshot($household->id);
+        $totalBalance = $snapshot['assets']['cash'];
 
         return response()->json([
             'accounts' => $accounts,
             'total_balance' => $totalBalance,
             'formatted_total' => 'Rp ' . number_format($totalBalance , 0, ',', '.'),
+            'net_worth' => $snapshot,
         ]);
     }
 

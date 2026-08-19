@@ -13,8 +13,8 @@ return new class extends Migration
             $table->unsignedBigInteger('transaction_id');
             $table->string('nama');
             $table->integer('qty')->default(1);
-            $table->integer('harga_satuan')->default(0)->comment('in cents/smallest unit');
-            $table->integer('harga_total')->default(0)->comment('in cents/smallest unit');
+            $table->integer('harga_satuan')->default(0)->comment('in rupiah/smallest unit');
+            $table->integer('harga_total')->default(0)->comment('in rupiah/smallest unit');
             $table->timestamps();
 
             $table->foreign('transaction_id')

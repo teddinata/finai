@@ -15,7 +15,7 @@ return new class extends Migration
             $table->string('name'); // "50/30/20 Rule", "Custom Budget"
             $table->boolean('is_active')->default(true);
             $table->json('allocations'); // {"needs": 50, "wants": 30, "savings": 20}
-            $table->integer('monthly_income_target')->default(0)->comment('in cents');
+            $table->integer('monthly_income_target')->default(0)->comment('in rupiah');
             $table->text('notes')->nullable();
             $table->timestamps();
 
@@ -32,7 +32,7 @@ return new class extends Migration
             $table->unsignedBigInteger('household_id');
             $table->unsignedBigInteger('parent_category_id')->nullable();
             $table->unsignedBigInteger('category_id')->nullable();
-            $table->integer('limit_amount')->comment('in cents');
+            $table->integer('limit_amount')->comment('in rupiah');
             $table->enum('period_type', ['monthly', 'yearly'])->default('monthly');
             $table->date('start_date');
             $table->date('end_date')->nullable();

@@ -14,7 +14,7 @@ return new class extends Migration
             $table->unsignedBigInteger('payment_id')->nullable();
             $table->unsignedBigInteger('subscription_id')->nullable();
             $table->string('invoice_number')->unique();
-            $table->integer('amount')->comment('in cents/smallest currency unit');
+            $table->integer('amount')->comment('in rupiah (IDR tidak memakai pecahan)');
             $table->integer('tax')->default(0);
             $table->integer('total');
             $table->string('currency', 3)->default('IDR');

@@ -12,10 +12,14 @@ use Carbon\Carbon;
 class AnalyticsController extends Controller
 {
     protected $aiService;
+    protected $netWorth;
 
-    public function __construct(\App\Services\AiAnalysisService $aiService)
-    {
+    public function __construct(
+        \App\Services\AiAnalysisService $aiService,
+        \App\Services\NetWorthService $netWorth
+    ) {
         $this->aiService = $aiService;
+        $this->netWorth = $netWorth;
     }
 
     /**
@@ -254,7 +258,7 @@ class AnalyticsController extends Controller
             'total' => $item->total,
             'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
             'count' => $item->count,
-            'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense), 1) : 0,
+            'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense) * 100, 1) : 0,
             ];
         });
 
@@ -273,27 +277,15 @@ class AnalyticsController extends Controller
             'total' => $item->total,
             'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
             'count' => $item->count,
-            'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense), 1) : 0,
+            'percentage' => $totalExpense > 0 ? round(($item->total / $totalExpense) * 100, 1) : 0,
             ];
         });
 
-        // Accounts breakdown (Current balances)
-        $accountBreakdown = \App\Models\Account::where('household_id', $household->id)
-            ->where('is_active', true)
-            ->select('id', 'name', 'icon', 'color', 'current_balance')
-            ->get()
-            ->map(function ($account) {
-            return [
-            'account' => [
-            'id' => $account->id,
-            'name' => $account->name,
-            'icon' => $account->icon,
-            'color' => $account->color,
-            ],
-            'total' => $account->current_balance,
-            'formatted_total' => 'Rp ' . number_format($account->current_balance, 0, ',', '.'),
-            ];
-        });
+        // Posisi kekayaan per akhir periode. Ini angka stock, jadi tidak
+        // dijumlahkan dari transaksi dalam rentang, melainkan dari saldo akun.
+        $asOf = $endDate >= now()->toDateString() ? null : $endDate;
+        $netWorth = $this->netWorth->snapshot($household->id, $asOf);
+        $accountBreakdown = $this->netWorth->accountBreakdown($household->id, $asOf);
 
 
         // Payment method breakdown (all transactions)
@@ -325,7 +317,7 @@ class AnalyticsController extends Controller
                 'transaction_count' => $transactionCount,
                 'avg_transaction' => round($avgTransaction),
                 'formatted_avg_transaction' => 'Rp ' . number_format($avgTransaction, 0, ',', '.'),
-                'spending_change_percentage' => round($spendingChange, 1),
+                'spending_change_percentage' => round($spendingChange * 100, 1),
                 'period' => [
                     'start_date' => $startDate,
                     'end_date' => $endDate,
@@ -334,6 +326,7 @@ class AnalyticsController extends Controller
             'top_categories' => $topCategories,
             'top_merchants' => $topMerchants,
             'accounts' => $accountBreakdown,
+            'net_worth' => $netWorth,
             // 'payment_methods' => $paymentMethods,
         ]);
     }
@@ -376,7 +369,7 @@ class AnalyticsController extends Controller
             'total' => $item->total,
             'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
             'count' => $item->count,
-            'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount), 1) : 0,
+            'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount) * 100, 1) : 0,
             ];
         });
 
@@ -427,7 +420,7 @@ class AnalyticsController extends Controller
             'formatted_total' => 'Rp ' . number_format($item->total, 0, ',', '.'),
             'transaction_count' => $item->transaction_count,
             'last_transaction' => $item->last_transaction,
-            'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount), 1) : 0,
+            'percentage' => $totalAmount > 0 ? round(($item->total / $totalAmount) * 100, 1) : 0,
             ];
         });
 
@@ -553,9 +546,9 @@ class AnalyticsController extends Controller
                 'transaction_count' => $previousCount,
             ],
             'changes' => [
-                'spending_change_percentage' => round($spendingChange, 1),
+                'spending_change_percentage' => round($spendingChange * 100, 1),
                 'spending_change_amount' => $currentSpending - $previousSpending,
-                'count_change_percentage' => round($countChange, 1),
+                'count_change_percentage' => round($countChange * 100, 1),
                 'count_change_amount' => $currentCount - $previousCount,
             ],
         ]);
@@ -608,8 +601,9 @@ class AnalyticsController extends Controller
         $previousMonths = $trends->slice(-6, 3);
         $avgPrevious = $previousMonths->avg('total') ?? 0;
 
+        // Dihitung langsung dalam persen; ambang 5 di bawah memang 5%.
         $trendDirection = $avgPrevious > 0
-            ? (($avgRecent - $avgPrevious) / $avgPrevious)
+            ? (($avgRecent - $avgPrevious) / $avgPrevious) * 100
             : 0;
 
         return response()->json([

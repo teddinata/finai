@@ -13,7 +13,7 @@ return new class extends Migration
             $table->unsignedBigInteger('subscription_id')->nullable();
             $table->unsignedBigInteger('household_id');
             $table->unsignedBigInteger('user_id')->comment('who initiated the payment');
-            $table->integer('amount')->comment('in cents/smallest currency unit');
+            $table->integer('amount')->comment('in rupiah (IDR tidak memakai pecahan)');
             $table->integer('tax')->default(0);
             $table->integer('total')->comment('amount + tax');
             $table->string('currency', 3)->default('IDR');

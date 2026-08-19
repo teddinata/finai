@@ -15,9 +15,9 @@ return new class extends Migration
             $table->unsignedBigInteger('category_id')->nullable();
             $table->string('merchant');
             $table->date('tanggal');
-            $table->integer('subtotal')->default(0)->comment('in cents/smallest unit');
-            $table->integer('diskon')->default(0)->comment('in cents/smallest unit');
-            $table->integer('total')->comment('in cents/smallest unit');
+            $table->integer('subtotal')->default(0)->comment('in rupiah/smallest unit');
+            $table->integer('diskon')->default(0)->comment('in rupiah/smallest unit');
+            $table->integer('total')->comment('in rupiah/smallest unit');
             $table->enum('metode_pembayaran', [
                 'cash', 
                 'transfer', 

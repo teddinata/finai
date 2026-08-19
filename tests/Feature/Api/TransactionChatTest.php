@@ -32,8 +32,8 @@ class TransactionChatTest extends TestCase
         $this->account = Account::factory()->create([
             'household_id' => $this->household->id,
             'name' => 'BCA',
-            'initial_balance' => 1000000,
-            'current_balance' => 1000000
+            'initial_balance' => 10_000_000,
+            'current_balance' => 10_000_000
         ]);
         $this->category = Category::factory()->create([
             'name' => 'Makanan & Minuman',
@@ -192,7 +192,7 @@ class TransactionChatTest extends TestCase
         // Check balance updated
         $this->assertDatabaseHas('accounts', [
             'id' => $this->account->id,
-            'current_balance' => 985000 // 1000000 - 15000
+            'current_balance' => 10_000_000 - 15000
         ]);
     }
 }

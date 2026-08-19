@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\UsageController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\Api\AccountController;
+use App\Http\Controllers\Api\NetWorthController;
 use App\Http\Controllers\Api\TransferController;
 use App\Http\Controllers\Api\BudgetController;
 use App\Http\Controllers\Api\Admin\AdminController;
@@ -153,6 +154,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', [AccountController::class , 'store']);
             Route::put('/{account}', [AccountController::class , 'update']);
             Route::delete('/{account}', [AccountController::class , 'destroy']);
+        }
+        );
+
+        // Net worth & sisa aman dibelanjakan (angka posisi, bukan analitik periode)
+        Route::middleware('check.subscription')->group(function () {
+            Route::get('/net-worth', [NetWorthController::class , 'show']);
+            Route::get('/net-worth/history', [NetWorthController::class , 'history']);
+            Route::get('/safe-to-spend', [NetWorthController::class , 'safeToSpend']);
         }
         );
 

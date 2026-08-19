@@ -13,7 +13,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('slug')->unique();
             $table->enum('type', ['free', 'monthly', 'yearly', 'lifetime'])->default('monthly');
-            $table->integer('price')->default(0)->comment('in cents/smallest currency unit');
+            $table->integer('price')->default(0)->comment('in rupiah (IDR tidak memakai pecahan)');
             $table->string('currency', 3)->default('IDR');
             $table->json('features')->nullable();
             $table->text('description')->nullable();

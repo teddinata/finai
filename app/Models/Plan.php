@@ -251,7 +251,7 @@ class Plan extends Model
             return null;
         }
 
-        return 'Rp ' . number_format($daily / 100, 0, ',', '.') . '/hari';
+        return 'Rp ' . number_format($daily, 0, ',', '.') . '/hari';
     }
 
     /**
