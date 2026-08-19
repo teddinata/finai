@@ -21,8 +21,9 @@ class TransactionController extends Controller
     {
         $household = $request->user()->household;
 
+        // 'account' ikut di-eager-load karena formatter selalu membacanya.
         $query = Transaction::forHousehold($household->id)
-                           ->with(['category', 'creator', 'items']);
+                           ->with(['category', 'creator', 'items', 'account']);
 
         // Filters
         if ($request->filled('type')) {
@@ -505,7 +506,7 @@ class TransactionController extends Controller
                 'merchant' => $extractedData['merchant'] ?? 'Unknown Merchant',
                 'tanggal' => $finalDate,
                 
-                // Data ini sudah dalam CENTS (dari fungsi extractReceiptData)
+                // Rupiah utuh, satuan yang sama dengan seluruh kolom uang.
                 'subtotal' => $extractedData['subtotal'], 
                 'diskon' => $extractedData['diskon'],
                 'total' => $extractedData['total'],
@@ -523,7 +524,7 @@ class TransactionController extends Controller
                         'transaction_id' => $transaction->id,
                         'nama' => $item['nama'],
                         'qty' => $item['qty'],
-                        // Ini juga sudah CENTS
+                        // Rupiah utuh juga.
                         'harga_satuan' => $item['harga_satuan'], 
                         'harga_total' => $item['harga_total'],
                     ]);
@@ -651,7 +652,7 @@ class TransactionController extends Controller
      */
     /**
      * Extract receipt data using Gemini AI
-     * Returns amounts in RAW IDR integers
+     * Returns amounts in rupiah, sama seperti satuan di database.
      */
     private function extractReceiptData(string $imagePath): ?array
     {

@@ -14,8 +14,8 @@ return new class extends Migration
             $table->unsignedBigInteger('created_by');
             $table->string('name'); // "Dana Darurat", "DP Rumah"
             $table->text('description')->nullable();
-            $table->bigInteger('target_amount')->comment('in cents');
-            $table->bigInteger('current_amount')->default(0)->comment('in cents');
+            $table->bigInteger('target_amount')->comment('in rupiah');
+            $table->bigInteger('current_amount')->default(0)->comment('in rupiah');
             $table->date('deadline')->nullable();
             $table->string('icon')->default('🎯');
             $table->string('color', 7)->default('#10B981');
@@ -41,7 +41,7 @@ return new class extends Migration
             $table->id();
             $table->unsignedBigInteger('savings_goal_id');
             $table->unsignedBigInteger('transaction_id');
-            $table->bigInteger('amount')->comment('in cents');
+            $table->bigInteger('amount')->comment('in rupiah');
             $table->timestamps();
 
             $table->foreign('savings_goal_id')

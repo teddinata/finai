@@ -29,9 +29,9 @@ return new class extends Migration
             
             // Investment details
             $table->decimal('quantity', 20, 8)->default(0); // Jumlah unit/lot
-            $table->bigInteger('avg_buy_price')->default(0)->comment('Average buy price in cents');
-            $table->bigInteger('initial_amount')->default(0)->comment('Total invested in cents');
-            $table->bigInteger('current_value')->default(0)->comment('Current value in cents');
+            $table->bigInteger('avg_buy_price')->default(0)->comment('Average buy price in rupiah');
+            $table->bigInteger('initial_amount')->default(0)->comment('Total invested in rupiah');
+            $table->bigInteger('current_value')->default(0)->comment('Current value in rupiah');
             $table->decimal('current_price', 20, 8)->nullable()->comment('Current price per unit');
             
             // Metadata
@@ -72,9 +72,9 @@ return new class extends Migration
             $table->unsignedBigInteger('investment_id');
             $table->enum('type', ['buy', 'sell', 'dividend', 'fee'])->default('buy');
             $table->decimal('quantity', 20, 8)->default(0);
-            $table->bigInteger('price_per_unit')->comment('in cents');
-            $table->bigInteger('total_amount')->comment('in cents');
-            $table->bigInteger('fee')->default(0)->comment('in cents');
+            $table->bigInteger('price_per_unit')->comment('in rupiah');
+            $table->bigInteger('total_amount')->comment('in rupiah');
+            $table->bigInteger('fee')->default(0)->comment('in rupiah');
             $table->date('transaction_date');
             $table->text('notes')->nullable();
             $table->timestamps();

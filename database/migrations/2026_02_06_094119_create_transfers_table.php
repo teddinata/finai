@@ -15,7 +15,7 @@ return new class extends Migration
             $table->unsignedBigInteger('from_account_id');
             $table->unsignedBigInteger('to_account_id');
             $table->unsignedBigInteger('created_by');
-            $table->bigInteger('amount')->comment('in cents');
+            $table->bigInteger('amount')->comment('in rupiah');
             $table->date('tanggal');
             $table->text('notes')->nullable();
             $table->timestamps();

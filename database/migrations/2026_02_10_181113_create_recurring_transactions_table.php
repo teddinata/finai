@@ -19,7 +19,7 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->enum('type', ['income', 'expense'])->default('expense');
             $table->string('merchant')->nullable();
-            $table->bigInteger('amount')->comment('in cents');
+            $table->bigInteger('amount')->comment('in rupiah');
             
             // Recurrence settings
             $table->enum('frequency', ['daily', 'weekly', 'monthly', 'yearly'])->default('monthly');

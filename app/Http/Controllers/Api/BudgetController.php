@@ -82,7 +82,7 @@ class BudgetController extends Controller
             'remaining_amount' => ($allocation['amount'] ?? 0) - $spending,
             'formatted_remaining' => 'Rp ' . number_format((($allocation['amount'] ?? 0) - $spending), 0, ',', '.'),
             'usage_percentage' => $allocation && $allocation['amount'] > 0
-            ? round(($spending / $allocation['amount']), 1)
+            ? round(($spending / $allocation['amount']) * 100, 1)
             : 0,
             'is_exceeded' => $allocation && $spending > $allocation['amount'],
             ];

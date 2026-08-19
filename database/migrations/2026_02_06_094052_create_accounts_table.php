@@ -26,8 +26,8 @@ return new class extends Migration
             $table->string('institution')->nullable(); // Nama bank/institusi
             $table->string('icon')->default('💳');
             $table->string('color', 7)->default('#3B82F6');
-            $table->bigInteger('initial_balance')->default(0)->comment('in cents');
-            $table->bigInteger('current_balance')->default(0)->comment('in cents');
+            $table->bigInteger('initial_balance')->default(0)->comment('in rupiah');
+            $table->bigInteger('current_balance')->default(0)->comment('in rupiah');
             $table->boolean('include_in_total')->default(true); // Apakah dihitung di total net worth
             $table->boolean('is_active')->default(true);
             $table->integer('sort_order')->default(0);

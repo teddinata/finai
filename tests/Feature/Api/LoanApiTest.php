@@ -111,7 +111,12 @@ class LoanApiTest extends TestCase
             'status' => 'active'
         ]);
 
-        $this->account->update(['current_balance' => 5000000]);
+        // Saldo diturunkan dari initial_balance + transaksi, jadi menyetel
+        // current_balance saja akan tertimpa saat observer menghitung ulang.
+        $this->account->update([
+            'initial_balance' => 5000000,
+            'current_balance' => 5000000,
+        ]);
 
         $response = $this->actingAs($this->user)
             ->postJson("/api/loans/{$loan->id}/pay", [

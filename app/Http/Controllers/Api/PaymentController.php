@@ -34,7 +34,10 @@ class PaymentController extends Controller
     {
         $request->validate([
             'subscription_id' => 'required|exists:subscriptions,id',
-            'payment_method' => 'required|in:invoice,virtual_account,ewallet,qris',
+            'payment_method' => [
+                'required',
+                \Illuminate\Validation\Rule::in(config('xendit.enabled_payment_methods')),
+            ],
             'bank_code' => 'required_if:payment_method,virtual_account|in:BNI,BRI,MANDIRI,PERMATA,BCA',
             'ewallet_type' => 'required_if:payment_method,ewallet|in:OVO,DANA,LINKAJA,SHOPEEPAY',
             // OVO memakai push notification ke nomor HP, jadi Xendit mewajibkannya
