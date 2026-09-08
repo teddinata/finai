@@ -49,7 +49,11 @@ class KirimdevWebhookController extends Controller
         $record = [
             'received_at' => now()->toIso8601String(),
             'event' => $event,
-            'event_id' => $this->header($request, ['X-Kirim-Event-Id', 'X-Kirim-Delivery-Id', 'X-Kirim-Id']),
+            'event_id' => $this->header($request, ['X-Kirim-Event-Id', 'X-Kirim-Id']),
+            // Delivery id + attempt dipakai membedakan kiriman ulang Kirimdev
+            // dari pesan baru (nanti berguna untuk idempotency).
+            'delivery_id' => $this->header($request, ['X-Kirim-Delivery-Id']),
+            'attempt' => $this->header($request, ['X-Kirim-Attempt']),
             'source' => $this->header($request, ['X-Kirim-Source']),
             'signature' => $signature,
             'message' => $parsed,
@@ -57,7 +61,12 @@ class KirimdevWebhookController extends Controller
             'payload' => $payload,
         ];
 
-        $this->logChannel()->info('Kirimdev webhook received', $record);
+        // Monolog memotong array di kedalaman 9 ("Over 9 levels deep, aborting
+        // normalization"), padahal payload Meta lebih dalam dari itu. Jadi ke
+        // log kita kirim raw body-nya sebagai string supaya utuh.
+        $this->logChannel()->info('Kirimdev webhook received', [
+            'payload_raw' => $rawBody,
+        ] + array_diff_key($record, ['payload' => null]));
 
         $this->remember($record);
 
@@ -296,8 +305,11 @@ class KirimdevWebhookController extends Controller
             ]) ?? $this->firstOf($payload, ['kirim.phone_number_id', 'phone_number_id']),
             'display_phone_number' => $this->firstOf($value, ['metadata.display_phone_number']),
             'from' => $this->firstOf($message, ['from', 'sender.phone', 'sender'])
-                ?? $this->firstOf($value, ['contacts.0.wa_id']),
-            'contact_name' => $this->firstOf($value, ['contacts.0.profile.name']),
+                ?? $this->firstOf($value, ['contacts.0.wa_id'])
+                // Kirimdev menaruh nomor berformat "+62851..." di objek kirim.
+                ?? ltrim((string) $this->firstOf($payload, ['kirim.contact.phone_number']), '+') ?: null,
+            'contact_name' => $this->firstOf($value, ['contacts.0.profile.name'])
+                ?? $this->firstOf($payload, ['kirim.contact.name']),
             'message_id' => $this->firstOf($message, ['id', 'message_id', 'wamid']),
             'timestamp' => $this->firstOf($message, ['timestamp']),
             'type' => $type,
@@ -314,6 +326,9 @@ class KirimdevWebhookController extends Controller
                 'status' => $this->firstOf($status, ['status']),
                 'recipient' => $this->firstOf($status, ['recipient_id']),
             ] : null,
+            // Dipakai nanti saat membalas lewat API Kirimdev.
+            'conversation_id' => $this->firstOf($payload, ['kirim.conversation_id']),
+            'kirim_message_id' => $this->firstOf($payload, ['kirim.message_id']),
             'kirim' => $this->firstOf($payload, ['kirim']) ?? $this->firstOf($value, ['kirim']),
         ];
     }
