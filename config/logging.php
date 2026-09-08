@@ -58,6 +58,15 @@ return [
             'ignore_exceptions' => false,
         ],
 
+        // Log khusus integrasi WhatsApp Kirimdev, biar gampang di-tail sendiri.
+        'kirimdev' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/kirimdev.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('KIRIMDEV_LOG_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
         'single' => [
             'driver' => 'single',
             'path' => storage_path('logs/laravel.log'),
