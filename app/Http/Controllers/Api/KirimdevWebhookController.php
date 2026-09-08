@@ -3,7 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\Kirimdev\KirimdevClient;
+use App\Jobs\ReplyKirimdevMessage;
+use App\Services\Kirimdev\KirimdevReplyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -39,7 +40,7 @@ class KirimdevWebhookController extends Controller
      * Selalu 200 kecuali signature enforcement dinyalakan dan gagal, supaya
      * Kirimdev tidak retry terus-menerus selama masa testing.
      */
-    public function test(Request $request, KirimdevClient $kirimdev): JsonResponse
+    public function test(Request $request, KirimdevReplyService $replies): JsonResponse
     {
         $rawBody = $request->getContent();
         $payload = $this->decodePayload($rawBody);
@@ -83,7 +84,7 @@ class KirimdevWebhookController extends Controller
             ], 401);
         }
 
-        $reply = $this->maybeAutoReply($kirimdev, $event, $parsed);
+        $reply = $this->maybeAutoReply($replies, $event, $parsed);
 
         return response()->json([
             'success' => true,
@@ -96,14 +97,13 @@ class KirimdevWebhookController extends Controller
     }
 
     /**
-     * Balasan echo untuk membuktikan arah Laravel -> Kirimdev -> WhatsApp.
-     * Belum ada AI di sini, cuma memantulkan apa yang diterima.
+     * Putuskan apakah pesan ini perlu dibalas, lalu serahkan ke
+     * KirimdevReplyService (echo atau AI, tergantung KIRIMDEV_AI_REPLY).
      *
-     * Dijalankan sinkron karena payload-nya ringan dan supaya hasilnya
-     * langsung kelihatan saat testing. Begitu Gemini masuk, bagian ini
-     * harus pindah ke queue agar webhook tidak menahan koneksi Kirimdev.
+     * @param  array<string, mixed>  $parsed
+     * @return array<string, mixed>
      */
-    private function maybeAutoReply(KirimdevClient $kirimdev, ?string $event, array $parsed): array
+    private function maybeAutoReply(KirimdevReplyService $replies, ?string $event, array $parsed): array
     {
         if (! config('services.kirimdev.auto_reply')) {
             return ['sent' => false, 'reason' => 'auto_reply_disabled'];
@@ -131,132 +131,47 @@ class KirimdevWebhookController extends Controller
             return ['sent' => false, 'reason' => 'nomor_bukan_nomor_test'];
         }
 
-        try {
-            $response = $kirimdev->replyText(
-                $from,
-                $this->echoMessage($parsed),
-                (string) $parsed['message_id'],
-                $parsed['phone_number_id'] ? (string) $parsed['phone_number_id'] : null
-            );
+        if (! $this->claimMessage($parsed)) {
+            return ['sent' => false, 'reason' => 'sudah_diproses'];
+        }
 
-            return ['sent' => true, 'response' => $response];
+        // Kirimdev memutus koneksi di detik ke-10 lalu me-retry. Kalau AI
+        // dipakai, sebaiknya kerjakan di worker supaya webhook langsung 200.
+        if (config('services.kirimdev.queue')) {
+            ReplyKirimdevMessage::dispatch($parsed);
+
+            return ['sent' => false, 'queued' => true];
+        }
+
+        return $replies->replyTo($parsed);
+    }
+
+    /**
+     * Cegah satu pesan dibalas dua kali kalau Kirimdev mengirim ulang
+     * (retry karena timeout, atau pengiriman ganda).
+     *
+     * Cache::add bersifat atomik: hanya pemanggil pertama yang dapat true.
+     *
+     * @param  array<string, mixed>  $parsed
+     */
+    private function claimMessage(array $parsed): bool
+    {
+        $id = (string) ($parsed['message_id'] ?? '');
+
+        if ($id === '') {
+            return true;
+        }
+
+        try {
+            return Cache::add('kirimdev:handled:' . md5($id), true, 86400);
         } catch (\Throwable $e) {
-            // Gagal balas jangan bikin webhook balas 500 - Kirimdev akan retry
-            // dan pesan yang sama diproses berulang.
-            $this->logChannel()->error('Gagal mengirim balasan WhatsApp', [
-                'to' => $from,
+            // Cache bermasalah jangan sampai memblokir balasan.
+            $this->logChannel()->warning('Gagal menandai pesan sebagai diproses', [
                 'error' => $e->getMessage(),
             ]);
 
-            return ['sent' => false, 'reason' => 'kirim_gagal', 'error' => $e->getMessage()];
+            return true;
         }
-    }
-
-    private function echoMessage(array $parsed): string
-    {
-        $type = (string) ($parsed['type'] ?? 'unknown');
-
-        if ($type === 'text') {
-            $isi = '"' . $parsed['text'] . '"';
-        } elseif ($parsed['media'] ?? null) {
-            $isi = strtoupper((string) $parsed['media']['kind'])
-                . ' (' . ($parsed['media']['mime_type'] ?? 'tipe tidak diketahui') . ')'
-                . ' - media_status: ' . ($parsed['media']['media_status'] ?? 'null');
-        } else {
-            $isi = 'pesan tipe ' . $type;
-        }
-
-        return implode("\n", [
-            '[TEST] Webhook Benah aktif.',
-            '',
-            'Saya menerima: ' . $isi,
-            'Waktu server: ' . now()->timezone('Asia/Jakarta')->format('d M Y H:i') . ' WIB',
-            '',
-            'Ini balasan otomatis untuk menguji koneksi. Fitur AI belum tersambung.',
-        ]);
-    }
-
-    /**
-     * GET /api/webhooks/kirimdev-test
-     *
-     * Dipakai untuk dua hal:
-     * 1. Cek cepat lewat browser bahwa URL-nya hidup dan reachable.
-     * 2. Menjawab verification challenge gaya Meta (hub.challenge) kalau
-     *    Kirimdev meneruskannya saat webhook didaftarkan.
-     */
-    public function verify(Request $request)
-    {
-        $challenge = $request->query('hub_challenge', $request->query('hub.challenge'));
-
-        if ($challenge !== null) {
-            $token = $request->query('hub_verify_token', $request->query('hub.verify_token'));
-            $expected = (string) config('services.kirimdev.verify_token');
-
-            $this->logChannel()->info('Kirimdev webhook verification challenge', [
-                'token_match' => $expected === '' ? 'no_token_configured' : hash_equals($expected, (string) $token),
-            ]);
-
-            if ($expected !== '' && ! hash_equals($expected, (string) $token)) {
-                return response('Invalid verify token', 403);
-            }
-
-            return response((string) $challenge, 200)
-                ->header('Content-Type', 'text/plain');
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Kirimdev test webhook endpoint aktif. Kirim POST ke URL ini.',
-            'endpoint' => $request->fullUrl(),
-            'signature_enforced' => $this->enforceSignature(),
-            'secret_configured' => $this->secret() !== '',
-            'server_time' => now()->toIso8601String(),
-        ]);
-    }
-
-    /**
-     * GET /api/webhooks/kirimdev-test/last
-     *
-     * Lihat payload terakhir tanpa tail log. Payload berisi nomor WhatsApp
-     * pelanggan, jadi endpoint ini dikunci: hanya jalan di environment local
-     * atau kalau KIRIMDEV_DEBUG_TOKEN cocok.
-     */
-    public function last(Request $request): JsonResponse
-    {
-        if (! $this->allowDebugAccess($request)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Debug endpoint terkunci. Set KIRIMDEV_DEBUG_TOKEN lalu kirim ?token=... atau header X-Debug-Token.',
-            ], 403);
-        }
-
-        $records = Cache::get(self::CACHE_KEY, []);
-
-        return response()->json([
-            'success' => true,
-            'count' => count($records),
-            'data' => $records,
-        ]);
-    }
-
-    /**
-     * DELETE /api/webhooks/kirimdev-test/last
-     */
-    public function flush(Request $request): JsonResponse
-    {
-        if (! $this->allowDebugAccess($request)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Debug endpoint terkunci.',
-            ], 403);
-        }
-
-        Cache::forget(self::CACHE_KEY);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Riwayat payload dikosongkan.',
-        ]);
     }
 
     // =========================================================================

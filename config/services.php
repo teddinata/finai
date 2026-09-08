@@ -30,6 +30,8 @@ return [
 
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-2.5-flash'),
+        'timeout' => env('GEMINI_TIMEOUT', 30),
     ],
 
     'slack' => [
@@ -51,6 +53,14 @@ return [
         // pelanggan dibalas bot saat testing. Hanya KIRIMDEV_TEST_NUMBER
         // yang akan dibalas.
         'auto_reply' => env('KIRIMDEV_AUTO_REPLY', false),
+
+        // Balas pakai Gemini (tanya jawab produk Benah). Kalau false, balasan
+        // tetap echo seperti sebelumnya. Butuh auto_reply true juga.
+        'ai_reply' => env('KIRIMDEV_AI_REPLY', false),
+
+        // Proses balasan lewat queue (butuh `php artisan queue:work` jalan).
+        // Disarankan true begitu AI aktif, karena Kirimdev timeout 10 detik.
+        'queue' => env('KIRIMDEV_QUEUE', false),
 
         // Selama smoke test biarkan false: payload tetap masuk walau
         // signature belum cocok, hasil verifikasinya dilaporkan di response.
