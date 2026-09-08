@@ -44,6 +44,13 @@ return [
         'webhook_secret' => env('KIRIMDEV_WEBHOOK_SECRET'),
         'phone_number_id' => env('KIRIMDEV_PHONE_NUMBER_ID'),
         'base_url' => env('KIRIMDEV_BASE_URL', 'https://api.kirimdev.com'),
+        'timeout' => env('KIRIMDEV_TIMEOUT', 15),
+
+        // Balas otomatis pesan masuk (echo, belum AI). Sengaja default false:
+        // nomor yang dipakai adalah nomor bisnis asli, jangan sampai semua
+        // pelanggan dibalas bot saat testing. Hanya KIRIMDEV_TEST_NUMBER
+        // yang akan dibalas.
+        'auto_reply' => env('KIRIMDEV_AUTO_REPLY', false),
 
         // Selama smoke test biarkan false: payload tetap masuk walau
         // signature belum cocok, hasil verifikasinya dilaporkan di response.

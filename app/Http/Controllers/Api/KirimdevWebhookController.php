@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\Kirimdev\KirimdevClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -38,7 +39,7 @@ class KirimdevWebhookController extends Controller
      * Selalu 200 kecuali signature enforcement dinyalakan dan gagal, supaya
      * Kirimdev tidak retry terus-menerus selama masa testing.
      */
-    public function test(Request $request): JsonResponse
+    public function test(Request $request, KirimdevClient $kirimdev): JsonResponse
     {
         $rawBody = $request->getContent();
         $payload = $this->decodePayload($rawBody);
@@ -82,12 +83,96 @@ class KirimdevWebhookController extends Controller
             ], 401);
         }
 
+        $reply = $this->maybeAutoReply($kirimdev, $event, $parsed);
+
         return response()->json([
             'success' => true,
             'message' => 'Webhook received',
             'event' => $event,
             'signature' => $signature,
             'parsed' => $parsed,
+            'auto_reply' => $reply,
+        ]);
+    }
+
+    /**
+     * Balasan echo untuk membuktikan arah Laravel -> Kirimdev -> WhatsApp.
+     * Belum ada AI di sini, cuma memantulkan apa yang diterima.
+     *
+     * Dijalankan sinkron karena payload-nya ringan dan supaya hasilnya
+     * langsung kelihatan saat testing. Begitu Gemini masuk, bagian ini
+     * harus pindah ke queue agar webhook tidak menahan koneksi Kirimdev.
+     */
+    private function maybeAutoReply(KirimdevClient $kirimdev, ?string $event, array $parsed): array
+    {
+        if (! config('services.kirimdev.auto_reply')) {
+            return ['sent' => false, 'reason' => 'auto_reply_disabled'];
+        }
+
+        if ($event !== 'message.received') {
+            return ['sent' => false, 'reason' => 'bukan_pesan_masuk'];
+        }
+
+        $from = (string) ($parsed['from'] ?? '');
+
+        if ($from === '') {
+            return ['sent' => false, 'reason' => 'pengirim_tidak_diketahui'];
+        }
+
+        // Pengaman penting: nomor bisnis ini dipakai pelanggan asli.
+        // Tanpa whitelist, semua orang yang chat akan dibalas bot.
+        $allowed = preg_replace('/\D+/', '', (string) config('services.kirimdev.test_number'));
+
+        if ($allowed === '' || $allowed === null) {
+            return ['sent' => false, 'reason' => 'KIRIMDEV_TEST_NUMBER_belum_diisi'];
+        }
+
+        if (preg_replace('/\D+/', '', $from) !== $allowed) {
+            return ['sent' => false, 'reason' => 'nomor_bukan_nomor_test'];
+        }
+
+        try {
+            $response = $kirimdev->replyText(
+                $from,
+                $this->echoMessage($parsed),
+                (string) $parsed['message_id'],
+                $parsed['phone_number_id'] ? (string) $parsed['phone_number_id'] : null
+            );
+
+            return ['sent' => true, 'response' => $response];
+        } catch (\Throwable $e) {
+            // Gagal balas jangan bikin webhook balas 500 - Kirimdev akan retry
+            // dan pesan yang sama diproses berulang.
+            $this->logChannel()->error('Gagal mengirim balasan WhatsApp', [
+                'to' => $from,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['sent' => false, 'reason' => 'kirim_gagal', 'error' => $e->getMessage()];
+        }
+    }
+
+    private function echoMessage(array $parsed): string
+    {
+        $type = (string) ($parsed['type'] ?? 'unknown');
+
+        if ($type === 'text') {
+            $isi = '"' . $parsed['text'] . '"';
+        } elseif ($parsed['media'] ?? null) {
+            $isi = strtoupper((string) $parsed['media']['kind'])
+                . ' (' . ($parsed['media']['mime_type'] ?? 'tipe tidak diketahui') . ')'
+                . ' - media_status: ' . ($parsed['media']['media_status'] ?? 'null');
+        } else {
+            $isi = 'pesan tipe ' . $type;
+        }
+
+        return implode("\n", [
+            '[TEST] Webhook Benah aktif.',
+            '',
+            'Saya menerima: ' . $isi,
+            'Waktu server: ' . now()->timezone('Asia/Jakarta')->format('d M Y H:i') . ' WIB',
+            '',
+            'Ini balasan otomatis untuk menguji koneksi. Fitur AI belum tersambung.',
         ]);
     }
 
