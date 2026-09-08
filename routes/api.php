@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\RecurringTransactionController;
 use App\Http\Controllers\Api\InvestmentController;
 use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\PaymentRedirectController;
+use App\Http\Controllers\Api\KirimdevWebhookController;
 
 /*
  |--------------------------------------------------------------------------
@@ -33,6 +34,17 @@ use App\Http\Controllers\PaymentRedirectController;
 
 // Webhooks (dari payment gateway) - MUST BE OUTSIDE auth:sanctum
 Route::post('/webhooks/xendit', [WebhookController::class , 'xendit']);
+
+// Webhook testing Kirimdev (WhatsApp) - juga harus di luar auth:sanctum
+Route::post('/webhooks/kirimdev-test', [KirimdevWebhookController::class , 'test']);
+Route::get('/webhooks/kirimdev-test', [KirimdevWebhookController::class , 'verify']);
+
+// Endpoint bantu development: lihat / hapus payload terakhir tanpa tail log.
+// Dikunci KIRIMDEV_DEBUG_TOKEN (atau environment local).
+Route::middleware('throttle:60,1')->group(function () {
+    Route::get('/webhooks/kirimdev-test/last', [KirimdevWebhookController::class , 'last']);
+    Route::delete('/webhooks/kirimdev-test/last', [KirimdevWebhookController::class , 'flush']);
+});
 
 // Payment redirect routes
 Route::get('/payment/success', [PaymentRedirectController::class , 'success'])->name('payment.success');
