@@ -48,7 +48,7 @@ class BenahAssistantService
         $contents = $history;
         $contents[] = ['role' => 'user', 'parts' => [['text' => $question]]];
 
-        $answer = $this->ask($contents, $customerName);
+        $answer = $this->ask($contents, $customerName, $history === []);
 
         $this->rememberTurn($conversationKey, $question, $answer);
 
@@ -66,7 +66,7 @@ class BenahAssistantService
     /**
      * @param  array<int, array<string, mixed>>  $contents
      */
-    private function ask(array $contents, ?string $customerName): string
+    private function ask(array $contents, ?string $customerName, bool $percakapanBaru): string
     {
         $apiKey = trim((string) config('services.gemini.api_key'));
 
@@ -80,16 +80,10 @@ class BenahAssistantService
         $response = Http::timeout((int) config('services.gemini.timeout', 30))
             ->post($url, [
                 'system_instruction' => [
-                    'parts' => [['text' => $this->systemPrompt($customerName)]],
+                    'parts' => [['text' => $this->systemPrompt($customerName, $percakapanBaru)]],
                 ],
                 'contents' => $contents,
-                'generationConfig' => [
-                    // Sedikit lebih luwes dari ekstraksi transaksi (0.1) karena
-                    // ini percakapan, tapi tetap rendah supaya tidak melantur.
-                    'temperature' => 0.3,
-                    'maxOutputTokens' => 1024,
-                ],
-                'safetySettings' => [],
+                'generationConfig' => $this->generationConfig(),
             ]);
 
         if ($response->status() === 429) {
@@ -125,21 +119,65 @@ class BenahAssistantService
     }
 
     /**
+     * gemini-2.5-flash menghitung token "berpikir" ke dalam jatah output,
+     * jadi jawaban panjang bisa terpotong di tengah. Untuk tanya jawab CS
+     * mode berpikir tidak diperlukan: dimatikan supaya lebih cepat dan
+     * seluruh jatah token dipakai untuk jawaban.
+     *
+     * @return array<string, mixed>
+     */
+    private function generationConfig(): array
+    {
+        $config = [
+            // Sedikit lebih luwes dari ekstraksi transaksi (0.1) karena ini
+            // percakapan, tapi tetap rendah supaya tidak melantur.
+            'temperature' => 0.3,
+            'maxOutputTokens' => (int) config('services.gemini.max_output_tokens', 800),
+        ];
+
+        $thinking = config('services.gemini.thinking_budget');
+
+        if ($thinking !== null && $thinking !== '') {
+            $config['thinkingConfig'] = ['thinkingBudget' => (int) $thinking];
+        }
+
+        return $config;
+    }
+
+    /**
      * Instruksi sistem + basis pengetahuan produk.
      */
-    private function systemPrompt(?string $customerName): string
+    private function systemPrompt(?string $customerName, bool $percakapanBaru): string
     {
-        $sapaan = $customerName ? "Nama pelanggan yang sedang chat: {$customerName}." : '';
+        $nama = $customerName ? "Nama pelanggan: {$customerName} (jangan disebut berulang-ulang)." : '';
+
+        // Tanpa aturan ini model membuka setiap balasan dengan "Halo Kak ...",
+        // yang terasa kaku kalau percakapan sudah berjalan.
+        $pembuka = $percakapanBaru
+            ? 'Ini pesan pertama dari pelanggan. Boleh menyapa singkat sekali saja, lalu langsung jawab.'
+            : 'Percakapan sudah berjalan. JANGAN menyapa lagi, jangan menulis "Halo" atau menyebut nama, langsung jawab isinya.';
 
         return <<<PROMPT
         Kamu adalah asisten resmi Benah, aplikasi pencatatan dan pengelolaan keuangan
         rumah tangga asal Indonesia. Kamu menjawab pelanggan lewat WhatsApp.
 
-        {$sapaan}
+        {$nama}
+        {$pembuka}
 
         CARA MENJAWAB
-        - Selalu Bahasa Indonesia yang ramah, sopan, dan santai. Boleh pakai "kak".
-        - Singkat, maksimal 4 kalimat atau beberapa poin pendek. Ini WhatsApp, bukan email.
+        - Bahasa Indonesia yang wajar seperti admin CS yang paham produk:
+          ramah tapi tidak berlebihan, langsung ke inti pertanyaan.
+        - Kalimat pertama harus sudah menjawab pertanyaannya, bukan basa-basi.
+        - Jangan menutup dengan kalimat template seperti "semoga membantu ya",
+          "ada lagi yang bisa dibantu?", atau "jangan ragu bertanya". Cukup
+          berhenti setelah informasinya lengkap. Boleh menawarkan bantuan
+          lanjutan HANYA kalau memang ada langkah berikutnya yang jelas.
+        - Sapaan "kak" secukupnya saja, tidak perlu di setiap kalimat.
+        - Kalau perlu menyebut lawan bicara, pakai "Kakak", jangan "Anda".
+        - Emoji maksimal satu, dan boleh tidak ada sama sekali.
+        - Singkat. Maksimal 4 kalimat, atau 4 poin pendek kalau memang berupa
+          daftar. Ini WhatsApp, bukan email. Kalau pertanyaannya luas, jawab
+          garis besarnya saja lalu tawarkan detail yang mana yang mau dibahas.
         - Jangan pakai markdown heading atau tabel.
         - Kalau perlu daftar, tiap baris diawali tanda hubung "-". JANGAN pernah
           memakai bintang "*" sebagai penanda daftar, karena di WhatsApp bintang

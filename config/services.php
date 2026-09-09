@@ -32,6 +32,10 @@ return [
         'api_key' => env('GEMINI_API_KEY'),
         'model' => env('GEMINI_MODEL', 'gemini-2.5-flash'),
         'timeout' => env('GEMINI_TIMEOUT', 30),
+        'max_output_tokens' => env('GEMINI_MAX_OUTPUT_TOKENS', 800),
+        // 0 = matikan mode berpikir. Kosongkan kalau model yang dipakai
+        // tidak mendukung thinkingConfig.
+        'thinking_budget' => env('GEMINI_THINKING_BUDGET', 0),
     ],
 
     'slack' => [
