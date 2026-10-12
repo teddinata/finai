@@ -55,6 +55,9 @@ Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class , 'register']);
     Route::post('/register/invite', [AuthController::class , 'registerWithInvite']);
     Route::post('/login', [AuthController::class , 'login']);
+    // Checkout tanpa daftar: akun dibuat otomatis, password dikirim lewat email
+    Route::post('/checkout-account', [AuthController::class , 'checkoutAccount'])
+        ->middleware('throttle:5,1');
 });
 
 // Plans (public - untuk pricing page)

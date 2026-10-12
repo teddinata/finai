@@ -54,6 +54,9 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // Alamat aplikasi web (frontend), dipakai untuk tautan di email
+    'frontend_url' => env('FRONTEND_URL', 'https://pakaibenah.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone
