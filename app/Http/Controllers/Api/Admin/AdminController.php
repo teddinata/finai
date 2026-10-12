@@ -576,6 +576,9 @@ class AdminController extends Controller
             'is_active' => 'boolean',
         ]);
 
+        // Kolom NOT NULL: nilai kosong dari form jatuh ke default, bukan null
+        $validated['min_purchase_amount'] ??= 0;
+        $validated['max_uses_per_household'] ??= 1;
         $validated['created_by'] = $request->user()->id;
 
         $voucher = Voucher::create($validated);
@@ -604,6 +607,13 @@ class AdminController extends Controller
             'applicable_plans' => 'nullable|array',
             'is_active' => 'boolean',
         ]);
+
+        if (array_key_exists('min_purchase_amount', $validated)) {
+            $validated['min_purchase_amount'] ??= 0;
+        }
+        if (array_key_exists('max_uses_per_household', $validated)) {
+            $validated['max_uses_per_household'] ??= 1;
+        }
 
         $voucher->update($validated);
 
