@@ -23,7 +23,13 @@ test('checkout tanpa daftar membuat akun, token, dan mengirim password lewat ema
 
     $response->assertStatus(201)
         ->assertJsonStructure(['token', 'user' => ['id', 'email', 'household']])
-        ->assertJsonPath('password_sent_to', 'budi@example.com');
+        ->assertJsonPath('password_emailed', true);
+
+    // Password di respons harus bisa dipakai login
+    $this->postJson('/api/auth/login', [
+        'email' => 'budi@example.com',
+        'password' => $response->json('password'),
+    ])->assertOk();
 
     $user = User::where('email', 'budi@example.com')->firstOrFail();
     expect($user->role)->toBe('owner');
@@ -53,13 +59,16 @@ test('email yang sudah terdaftar ditolak dan diarahkan untuk masuk', function ()
     Notification::assertNothingSent();
 });
 
-test('akun dibatalkan kalau email password gagal terkirim', function () {
+test('akun tetap dibuat kalau email gagal terkirim, password tetap dikembalikan', function () {
     Notification::shouldReceive('send')->andThrow(new RuntimeException('SMTP down'));
 
-    $this->postJson('/api/auth/checkout-account', [
+    $response = $this->postJson('/api/auth/checkout-account', [
         'name' => 'Budi',
         'email' => 'budi@example.com',
-    ])->assertStatus(500);
+    ]);
 
-    expect(User::where('email', 'budi@example.com')->exists())->toBeFalse();
+    $response->assertStatus(201)->assertJsonPath('password_emailed', false);
+
+    $user = User::where('email', 'budi@example.com')->firstOrFail();
+    expect(Hash::check($response->json('password'), $user->password))->toBeTrue();
 });

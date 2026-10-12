@@ -97,9 +97,10 @@ class AuthController extends Controller
     }
 
     /**
-     * Checkout tanpa daftar: buat akun dari nama + email saja, lalu kirim
-     * password sementara lewat email. Token dikembalikan supaya pengunjung
-     * bisa langsung lanjut ke pembayaran dengan alur subscribe/payments biasa.
+     * Checkout tanpa daftar: buat akun dari nama + email saja. Password
+     * sementara dikembalikan sekali untuk ditampilkan di layar dan juga dikirim
+     * lewat email. Token dikembalikan supaya pengunjung bisa langsung lanjut
+     * ke pembayaran dengan alur subscribe/payments biasa.
      */
     public function checkoutAccount(Request $request)
     {
@@ -147,19 +148,7 @@ class AuthController extends Controller
 
             $token = $user->createToken('auth_token')->plainTextToken;
 
-            // Kalau email gagal terkirim, akun dibatalkan: tanpa email ini
-            // pemilik akun tidak punya cara untuk masuk lagi.
-            $user->notify(new CheckoutAccountCreated($password));
-
             DB::commit();
-
-            return response()->json([
-                'message' => 'Akun dibuat. Password dikirim ke email kamu.',
-                'user' => $user->load('household.currentSubscription.plan'),
-                'token' => $token,
-                'password_sent_to' => $user->email,
-            ], 201);
-
         }
         catch (\Exception $e) {
             DB::rollBack();
@@ -169,6 +158,28 @@ class AuthController extends Controller
                 'message' => 'Akun belum bisa dibuat. Coba lagi sebentar lagi.',
             ], 500);
         }
+
+        // Email hanya salinan: password juga ditampilkan sekali di layar checkout,
+        // jadi kegagalan kirim email tidak membatalkan akun.
+        $emailed = true;
+        try {
+            $user->notify(new CheckoutAccountCreated($password));
+        }
+        catch (\Throwable $e) {
+            $emailed = false;
+            Log::warning('Checkout account email failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Akun dibuat.',
+            'user' => $user->load('household.currentSubscription.plan'),
+            'token' => $token,
+            'password' => $password,
+            'password_emailed' => $emailed,
+        ], 201);
     }
 
     /**
