@@ -12,6 +12,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use App\Notifications\CheckoutAccountCreated;
 
 class AuthController extends Controller
 {
@@ -89,6 +92,81 @@ class AuthController extends Controller
             return response()->json([
                 'message' => 'Registration failed',
                 'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Checkout tanpa daftar: buat akun dari nama + email saja, lalu kirim
+     * password sementara lewat email. Token dikembalikan supaya pengunjung
+     * bisa langsung lanjut ke pembayaran dengan alur subscribe/payments biasa.
+     */
+    public function checkoutAccount(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'household_name' => 'nullable|string|max:255',
+        ], [
+            'email.unique' => 'Email ini sudah terdaftar. Silakan masuk untuk melanjutkan pembayaran.',
+        ]);
+
+        $password = Str::password(12, symbols: false);
+
+        DB::beginTransaction();
+        try {
+            $household = Household::create([
+                'name' => $validated['household_name'] ?? 'Keluarga ' . $validated['name'],
+            ]);
+
+            $user = User::create([
+                'name' => $validated['name'],
+                'email' => $validated['email'],
+                'password' => Hash::make($password),
+                'household_id' => $household->id,
+                'role' => 'owner',
+                'is_billing_owner' => true,
+                'active' => true,
+            ]);
+
+            $household->update(['created_by' => $user->id]);
+
+            // Mulai dari paket gratis; paket berbayar aktif setelah pembayaran lunas
+            $freePlan = Plan::where('slug', 'premium-free')->first();
+
+            $subscription = Subscription::create([
+                'household_id' => $household->id,
+                'plan_id' => $freePlan->id,
+                'status' => 'active',
+                'started_at' => now(),
+                'expires_at' => null,
+                'auto_renew' => false,
+            ]);
+
+            $household->update(['current_subscription_id' => $subscription->id]);
+
+            $token = $user->createToken('auth_token')->plainTextToken;
+
+            // Kalau email gagal terkirim, akun dibatalkan: tanpa email ini
+            // pemilik akun tidak punya cara untuk masuk lagi.
+            $user->notify(new CheckoutAccountCreated($password));
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Akun dibuat. Password dikirim ke email kamu.',
+                'user' => $user->load('household.currentSubscription.plan'),
+                'token' => $token,
+                'password_sent_to' => $user->email,
+            ], 201);
+
+        }
+        catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Checkout account failed', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'message' => 'Akun belum bisa dibuat. Coba lagi sebentar lagi.',
             ], 500);
         }
     }
