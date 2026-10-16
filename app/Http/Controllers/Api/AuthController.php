@@ -70,19 +70,30 @@ class AuthController extends Controller
             // Generate token
             $token = $user->createToken('auth_token')->plainTextToken;
 
-            // Send verification email (non-blocking)
-            $user->sendEmailVerificationNotification();
-
             DB::commit();
+
+            // Verifikasi menyusul: kegagalan kirim email tidak membatalkan pendaftaran
+            $verificationSent = true;
+            try {
+                $user->sendEmailVerificationNotification();
+            }
+            catch (\Throwable $e) {
+                $verificationSent = false;
+                Log::warning('Verification email failed', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Registration successful',
                 'user' => $user->load('household.currentSubscription.plan'),
                 'token' => $token,
-                'email_verification_sent' => true,
+                'email_verification_sent' => $verificationSent,
+                // Verifikasi menyusul, tidak ada fitur yang dikunci
                 'requires_verification' => [
-                    'paid_subscription' => true,
-                    'invite_members' => true,
+                    'paid_subscription' => false,
+                    'invite_members' => false,
                 ],
             ], 201);
 
@@ -325,11 +336,34 @@ class AuthController extends Controller
             'email' => 'sometimes|email|unique:users,email,' . $request->user()->id,
         ]);
 
-        $request->user()->update($validated);
+        $user = $request->user();
+        $emailChanged = isset($validated['email']) && $validated['email'] !== $user->email;
+
+        // Email baru harus diverifikasi ulang
+        if ($emailChanged) {
+            $validated['email_verified_at'] = null;
+        }
+
+        $user->update($validated);
+
+        $verificationSent = false;
+        if ($emailChanged) {
+            try {
+                $user->sendEmailVerificationNotification();
+                $verificationSent = true;
+            }
+            catch (\Throwable $e) {
+                Log::warning('Verification email failed', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         return response()->json([
             'message' => 'Profil berhasil diperbarui',
-            'user' => $request->user(),
+            'user' => $user,
+            'email_verification_sent' => $verificationSent,
         ]);
     }
 

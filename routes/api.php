@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\InvestmentController;
 use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\PaymentRedirectController;
 use App\Http\Controllers\Api\KirimdevWebhookController;
+use App\Http\Controllers\Api\PasswordResetController;
 
 /*
  |--------------------------------------------------------------------------
@@ -58,6 +59,11 @@ Route::prefix('auth')->group(function () {
     // Checkout tanpa daftar: akun dibuat otomatis, password dikirim lewat email
     Route::post('/checkout-account', [AuthController::class , 'checkoutAccount'])
         ->middleware('throttle:5,1');
+    // Lupa password
+    Route::post('/forgot-password', [PasswordResetController::class , 'forgot'])
+        ->middleware('throttle:5,1');
+    Route::post('/reset-password', [PasswordResetController::class , 'reset'])
+        ->middleware('throttle:10,1');
 });
 
 // Plans (public - untuk pricing page)
@@ -67,9 +73,9 @@ Route::get('/plans/{plan}', [PlanController::class , 'show']);
 // Vouchers (public)
 Route::get('/vouchers', [\App\Http\Controllers\Api\VoucherController::class , 'index']);
 
-// Email verification (public with signed middleware)
+// Verifikasi email (publik). Tanda tangan dicek di controller supaya link kedaluwarsa tetap diarahkan ke frontend
 Route::get('/email/verify/{id}/{hash}', [EmailVerificationController::class , 'verify'])
-    ->middleware(['signed'])
+    ->middleware('throttle:30,1')
     ->name('verification.verify');
 
 /*
@@ -79,9 +85,6 @@ Route::get('/email/verify/{id}/{hash}', [EmailVerificationController::class , 'v
  */
 
 Route::middleware('auth:sanctum')->group(function () {
-
-    // Email verification with token
-    Route::post('/email/verify', [EmailVerificationController::class , 'verifyWithToken']);
 
     Route::prefix('email')->group(function () {
             Route::get('/status', [EmailVerificationController::class , 'status']);
