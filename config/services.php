@@ -81,4 +81,18 @@ return [
         'test_user_id' => env('KIRIMDEV_TEST_USER_ID'),
     ],
 
+    // Meta Conversions API: event Purchase dari server saat pembayaran lunas
+    // (App\Jobs\SendMetaPurchaseEvent). Kosongkan pixel_id atau access_token untuk mematikan.
+    'meta' => [
+        'pixel_id' => env('META_PIXEL_ID'),
+        'access_token' => env('META_CAPI_ACCESS_TOKEN'),
+        // Isi dari Events Manager > Test events saat uji coba; kosongkan di produksi.
+        'test_event_code' => env('META_TEST_EVENT_CODE'),
+        'graph_version' => env('META_GRAPH_VERSION', 'v23.0'),
+        'timeout' => env('META_CAPI_TIMEOUT', 10),
+        // false = dikirim setelah respons webhook selesai (tidak perlu queue worker).
+        // true  = lewat queue, butuh `php artisan queue:work` jalan.
+        'queue' => env('META_CAPI_QUEUE', false),
+    ],
+
 ];
