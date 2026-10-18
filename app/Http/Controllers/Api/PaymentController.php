@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Payment;
 use App\Models\Subscription;
 use App\Services\XenditService;
+use App\Services\Meta\MetaConversionsApi;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +44,11 @@ class PaymentController extends Controller
             // OVO memakai push notification ke nomor HP, jadi Xendit mewajibkannya
             'mobile_number' => 'required_if:ewallet_type,OVO|nullable|string|max:20',
             'voucher_code' => 'nullable|string|max:50',
+            // Data browser untuk mencocokkan event Purchase di Meta (opsional)
+            'meta' => 'nullable|array',
+            'meta.fbp' => 'nullable|string|max:255',
+            'meta.fbc' => 'nullable|string|max:500',
+            'meta.event_source_url' => 'nullable|string|max:1000',
         ]);
 
         try {
@@ -130,6 +136,8 @@ class PaymentController extends Controller
                         default => throw new \Exception('Invalid payment method'),
                     };
 
+                $this->storeMetaTracking($payment, $request);
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Payment created successfully',
@@ -166,6 +174,34 @@ class PaymentController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Simpan fbp/fbc, IP, dan user agent pembeli untuk event Purchase ke Meta Conversions API.
+     * Webhook pelunasan datang dari server Xendit, jadi data browser pembeli hanya bisa
+     * diambil saat pembayaran dibuat. Tidak menyimpan apa pun kalau Meta belum dikonfigurasi.
+     */
+    protected function storeMetaTracking(Payment $payment, Request $request): void
+    {
+        if (!app(MetaConversionsApi::class)->isEnabled()) {
+            return;
+        }
+
+        // IP internal (misalnya IP reverse proxy) tidak berguna untuk pencocokan
+        $ip = filter_var($request->ip(), FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) ?: null;
+
+        $tracking = array_filter([
+            'fbp' => $request->input('meta.fbp'),
+            'fbc' => $request->input('meta.fbc'),
+            'event_source_url' => $request->input('meta.event_source_url'),
+            'client_ip_address' => $ip,
+            'client_user_agent' => mb_substr((string) $request->userAgent(), 0, 500) ?: null,
+        ]);
+
+        $payment->refresh();
+        $payment->update([
+            'metadata' => array_merge($payment->metadata ?? [], ['meta_tracking' => $tracking]),
+        ]);
     }
 
     /**

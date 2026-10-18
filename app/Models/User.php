@@ -161,4 +161,12 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         $this->notify(new \App\Notifications\CustomVerifyEmail);
     }
+
+    /**
+     * Link reset password mengarah ke halaman frontend.
+     */
+    public function sendPasswordResetNotification($token)
+    {
+        $this->notify(new \App\Notifications\ResetPasswordLink($token));
+    }
 }

@@ -3,95 +3,48 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\ApiEmailVerificationRequest;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use App\Models\User;
 
 class EmailVerificationController extends Controller
 {
     /**
-     * Send verification email
+     * Kirim link verifikasi. Dipanggil dari pengingat di aplikasi, bukan
+     * syarat untuk memakai Benah.
      */
     public function send(Request $request)
     {
-        $user = $request->user();
-
-        if ($user->hasVerifiedEmail()) {
-            return response()->json([
-                'message' => 'Email already verified',
-            ], 400);
-        }
-
-        $user->sendEmailVerificationNotification();
-
-        return response()->json([
-            'message' => 'Verification link sent to your email',
-            'email' => $user->email,
-        ]);
+        return $this->dispatchLink($request->user());
     }
 
     /**
-     * Verify email via signed URL
+     * Link dari email. Selalu diarahkan ke halaman frontend, termasuk saat link
+     * kedaluwarsa atau rusak, supaya pengguna tidak melihat halaman error JSON.
      */
-    public function verify(ApiEmailVerificationRequest $request)
+    public function verify(Request $request, string $id, string $hash)
     {
-        $user = User::find($request->route('id'));
+        $target = rtrim(config('app.frontend_url'), '/') . '/email-verified';
 
-        if (!$user) {
-            return redirect(config('app.frontend_url') . '/email-verified?status=error&message=user_not_found');
+        if (! $request->hasValidSignature()) {
+            return redirect($target . '?status=expired');
+        }
+
+        $user = User::find($id);
+
+        if (! $user || ! hash_equals($hash, sha1($user->getEmailForVerification()))) {
+            return redirect($target . '?status=invalid');
         }
 
         if ($user->hasVerifiedEmail()) {
-            return redirect(config('app.frontend_url') . '/email-verified?status=already-verified');
-        }
-
-        $request->fulfill();
-
-        return redirect(config('app.frontend_url') . '/email-verified?status=success');
-    }
-
-    /**
-     * Verify email via API (alternative method with token)
-     */
-    public function verifyWithToken(Request $request)
-    {
-        $validated = $request->validate([
-            'id' => 'required|exists:users,id',
-            'hash' => 'required|string',
-        ]);
-
-        $user = User::find($validated['id']);
-
-        if (!$user) {
-            return response()->json([
-                'message' => 'User not found',
-            ], 404);
-        }
-
-        if ($user->hasVerifiedEmail()) {
-            return response()->json([
-                'message' => 'Email already verified',
-            ], 400);
-        }
-
-        // Verify hash
-        if (!hash_equals(
-            (string) $validated['hash'],
-            sha1($user->getEmailForVerification())
-        )) {
-            return response()->json([
-                'message' => 'Invalid verification link',
-            ], 403);
+            return redirect($target . '?status=already-verified');
         }
 
         $user->markEmailAsVerified();
         event(new Verified($user));
 
-        return response()->json([
-            'message' => 'Email verified successfully',
-            'user' => $user,
-        ]);
+        return redirect($target . '?status=success');
     }
 
     /**
@@ -109,22 +62,37 @@ class EmailVerificationController extends Controller
     }
 
     /**
-     * Resend verification email
+     * Kirim ulang link verifikasi
      */
     public function resend(Request $request)
     {
-        $user = $request->user();
+        return $this->dispatchLink($request->user());
+    }
 
+    private function dispatchLink(User $user)
+    {
         if ($user->hasVerifiedEmail()) {
             return response()->json([
-                'message' => 'Email already verified',
+                'message' => 'Email sudah terverifikasi.',
             ], 400);
         }
 
-        $user->sendEmailVerificationNotification();
+        try {
+            $user->sendEmailVerificationNotification();
+        }
+        catch (\Throwable $e) {
+            Log::warning('Verification email failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Email verifikasi belum bisa dikirim. Coba lagi beberapa menit lagi.',
+            ], 503);
+        }
 
         return response()->json([
-            'message' => 'Verification email resent successfully',
+            'message' => 'Link verifikasi sudah dikirim.',
             'email' => $user->email,
         ]);
     }

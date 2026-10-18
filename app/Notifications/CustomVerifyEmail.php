@@ -14,6 +14,9 @@ class CustomVerifyEmail extends Notification
 {
     use Queueable;
 
+    // Verifikasi tidak diwajibkan di depan, jadi link dibuat cukup lama untuk dibuka belakangan
+    public const EXPIRE_HOURS = 24;
+
     /**
      * Get the notification's delivery channels.
      */
@@ -30,14 +33,13 @@ class CustomVerifyEmail extends Notification
         $verificationUrl = $this->verificationUrl($notifiable);
 
         return (new MailMessage)
-            ->subject('Verify Your Email Address')
-            ->greeting('Hello ' . $notifiable->name . '!')
-            ->line('Thank you for registering with FinAI Finance.')
-            ->line('Please click the button below to verify your email address.')
-            ->action('Verify Email Address', $verificationUrl)
-            ->line('This link will expire in 60 minutes.')
-            ->line('If you did not create an account, no further action is required.')
-            ->salutation('Regards, FinAI Finance Team');
+            ->subject('Verifikasi email akun Benah kamu')
+            ->greeting('Halo ' . $notifiable->name . '!')
+            ->line('Ketuk tombol di bawah untuk memastikan email ini milikmu. Email yang terverifikasi dipakai untuk memulihkan akun kalau kamu lupa password.')
+            ->action('Verifikasi email', $verificationUrl)
+            ->line('Link ini berlaku ' . self::EXPIRE_HOURS . ' jam. Kalau sudah lewat, kirim ulang dari menu Profil di aplikasi.')
+            ->line('Kalau kamu tidak merasa mendaftar di Benah, abaikan email ini.')
+            ->salutation('Salam, Tim Benah');
     }
 
     /**
@@ -47,7 +49,7 @@ class CustomVerifyEmail extends Notification
     {
         return URL::temporarySignedRoute(
             'verification.verify',
-            Carbon::now()->addMinutes(60),
+            Carbon::now()->addHours(self::EXPIRE_HOURS),
             [
                 'id' => $notifiable->getKey(),
                 'hash' => sha1($notifiable->getEmailForVerification()),

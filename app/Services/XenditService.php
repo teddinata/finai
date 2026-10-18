@@ -7,6 +7,7 @@ use Xendit\Invoice\InvoiceApi;
 use Xendit\PaymentRequest\PaymentRequestApi;
 use App\Models\Payment;
 use App\Models\Invoice;
+use App\Jobs\SendMetaPurchaseEvent;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 
@@ -598,6 +599,9 @@ class XenditService
 
         // Create invoice
         $this->createOrUpdateInvoice($payment);
+
+        // Event Purchase ke Meta Conversions API (optimasi iklan). Tidak pernah melempar error.
+        SendMetaPurchaseEvent::dispatchFor($payment, $paidVia);
 
         // ✅ TAMBAHKAN: Force refresh user data
         if ($payment->household) {
