@@ -59,8 +59,8 @@ class XenditService
                 'invoice_reminder' => ['email'],
                 'invoice_paid' => ['email'],
             ],
-            'success_redirect_url' => config('xendit.success_redirect_url'),
-            'failure_redirect_url' => config('xendit.failure_redirect_url'),
+            'success_redirect_url' => $this->redirectUrls($payment)['success'],
+            'failure_redirect_url' => $this->redirectUrls($payment)['failure'],
             'currency' => 'IDR',
             'items' => [
                 [
@@ -207,8 +207,8 @@ class XenditService
         $referenceId = 'EWALLET-' . $payment->id;
 
         $channelProperties = [
-            'success_return_url' => config('xendit.success_redirect_url'),
-            'failure_return_url' => config('xendit.failure_redirect_url'),
+            'success_return_url' => $this->redirectUrls($payment)['success'],
+            'failure_return_url' => $this->redirectUrls($payment)['failure'],
         ];
 
         // OVO memakai push notification ke nomor HP, bukan redirect, jadi
@@ -306,6 +306,22 @@ class XenditService
             \BaconQrCode\Encoder\Encoder::DEFAULT_BYTE_MODE_ENCODING,
             \BaconQrCode\Common\ErrorCorrectionLevel::M()
         );
+    }
+
+    /**
+     * Ke mana pembeli kembali setelah membayar di Xendit: langsung ke halaman frontend
+     * milik payment ini. Xendit tidak menambahkan ID pembayaran ke URL kembali
+     * e-wallet, jadi ID-nya harus sudah ada di path. Halaman sukses memeriksa status
+     * sendiri, dan pembayaran gagal/dibatalkan kembali ke halaman menunggu.
+     */
+    protected function redirectUrls(Payment $payment): array
+    {
+        $frontendUrl = rtrim(config('app.frontend_url'), '/');
+
+        return [
+            'success' => "{$frontendUrl}/payment/success/{$payment->id}",
+            'failure' => "{$frontendUrl}/payment/waiting/{$payment->id}",
+        ];
     }
 
     /**
@@ -586,9 +602,7 @@ class XenditService
             ]);
 
             // Set as current subscription
-            $payment->household->update([
-                'current_subscription_id' => $subscription->id,
-            ]);
+            $payment->household->switchToSubscription($subscription);
 
             Log::info('Subscription activated', [
                 'subscription_id' => $subscription->id,

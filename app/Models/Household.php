@@ -64,7 +64,28 @@ class Household extends Model
      */
     public function getCurrentPlan(): ?Plan
     {
+        // Paket yang belum dibayar belum berlaku: pakai kuota paket gratis dulu
+        if ($this->currentSubscription?->status === 'pending') {
+            return Plan::where('slug', 'premium-free')->first();
+        }
+
         return $this->currentSubscription?->plan;
+    }
+
+    /**
+     * Jadikan subscription ini paket yang berlaku. Paket lama baru dibatalkan di sini,
+     * yaitu saat paket baru sudah aktif (lunas), bukan saat checkout.
+     */
+    public function switchToSubscription(Subscription $subscription): void
+    {
+        $previous = $this->currentSubscription;
+
+        if ($previous && $previous->id !== $subscription->id && $previous->isActive()) {
+            $previous->cancel('Upgraded/downgraded plan');
+        }
+
+        $this->update(['current_subscription_id' => $subscription->id]);
+        $this->setRelation('currentSubscription', $subscription);
     }
 
     /**

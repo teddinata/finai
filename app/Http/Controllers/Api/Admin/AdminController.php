@@ -441,9 +441,7 @@ class AdminController extends Controller
 
         // If active, ensure household points to this
         if ($validated['status'] === 'active') {
-            $subscription->household->update([
-                'current_subscription_id' => $subscription->id
-            ]);
+            $subscription->household->switchToSubscription($subscription);
         }
 
         return response()->json([

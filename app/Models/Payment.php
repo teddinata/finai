@@ -18,6 +18,7 @@ class Payment extends Model
         'currency',
         'payment_method',
         'payment_gateway_id',
+        'payment_token',
         'snap_token',
         'voucher_id',
         'discount_amount',

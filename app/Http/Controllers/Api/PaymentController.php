@@ -222,9 +222,7 @@ class PaymentController extends Controller
             'expires_at' => $expiresAt,
         ]);
 
-        $subscription->household->update([
-            'current_subscription_id' => $subscription->id,
-        ]);
+        $subscription->household->switchToSubscription($subscription);
     }
 
     /**
@@ -322,6 +320,18 @@ class PaymentController extends Controller
     }
 
     /**
+     * Metode pembayaran yang sedang aktif (XENDIT_ENABLED_METHODS), supaya halaman
+     * pembayaran menyembunyikan channel yang dimatikan alih-alih gagal saat validasi.
+     */
+    public function methods()
+    {
+        return response()->json([
+            'success' => true,
+            'methods' => config('xendit.enabled_payment_methods'),
+        ]);
+    }
+
+    /**
      * Cancel pending payment
      */
     public function cancel(Request $request, Payment $payment)
@@ -347,6 +357,11 @@ class PaymentController extends Controller
                     'cancelled_at' => now()->toIso8601String(),
                 ]),
             ]);
+
+            // Checkout dibatalkan: paket barunya ikut batal, paket sekarang tetap jalan
+            if ($payment->subscription?->status === 'pending') {
+                $payment->subscription->cancel('Payment canceled by user');
+            }
         });
 
         return response()->json([

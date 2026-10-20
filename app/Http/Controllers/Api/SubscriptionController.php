@@ -72,14 +72,13 @@ class SubscriptionController extends Controller
                 ]);
             }
         }
-        else {
-            // Only show pending payment for the CURRENT subscription
-            $pendingPayment = Payment::where('household_id', $household->id)
-                ->where('subscription_id', $subscription->id)
-                ->where('status', 'pending')
-                ->latest()
-                ->first();
-        }
+
+        // Checkout yang menunggu pembayaran: subscription-nya bukan (belum) paket sekarang
+        $pendingPayment = Payment::where('household_id', $household->id)
+            ->where('status', 'pending')
+            ->whereHas('subscription', fn ($q) => $q->where('status', 'pending'))
+            ->latest()
+            ->first();
 
         // ✅ FIX: If subscription is pending, return free plan as effective features
         $effectivePlan = $subscription->plan;
@@ -156,10 +155,14 @@ class SubscriptionController extends Controller
                 'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.auto_canceled', true, '$.reason', 'New subscription created')")
             ]);
 
-            // Cancel current subscription if exists
-            if ($household->currentSubscription) {
-                $household->currentSubscription->cancel('Upgraded/downgraded plan');
-            }
+            // Checkout lama yang belum dibayar tidak berlaku lagi
+            Subscription::where('household_id', $household->id)
+                ->where('status', 'pending')
+                ->update([
+                'status' => 'canceled',
+                'canceled_at' => now(),
+                'cancellation_reason' => 'New subscription created',
+            ]);
 
             // ✅ FIX: Calculate expiry based on billing_cycle, not plan->type
             $expiresAt = match ($billingCycle) {
@@ -189,8 +192,12 @@ class SubscriptionController extends Controller
                 'auto_renew' => $plan->isRecurring(),
             ]);
 
-            // Update household
-            $household->update(['current_subscription_id' => $subscription->id]);
+            // Paket gratis langsung berlaku. Paket berbayar baru menggantikan paket
+            // sekarang setelah lunas (lihat Household::switchToSubscription), jadi
+            // kuota dan akses tetap mengikuti paket lama selama belum dibayar.
+            if ($plan->isFree()) {
+                $household->switchToSubscription($subscription);
+            }
 
             // If not free, create payment with CORRECT price
             if (!$plan->isFree()) {
