@@ -40,18 +40,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Redirect URLs
-    |--------------------------------------------------------------------------
-    |
-    | URLs to redirect users after payment success/failure
-    |
-    */
-
-    'success_redirect_url' => env('XENDIT_SUCCESS_URL', env('APP_URL') . '/payment/success'),
-    'failure_redirect_url' => env('XENDIT_FAILURE_URL', env('APP_URL') . '/payment/failed'),
-
-    /*
-    |--------------------------------------------------------------------------
     | Payment Settings
     |--------------------------------------------------------------------------
     */

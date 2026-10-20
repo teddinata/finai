@@ -3,10 +3,16 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Http\Controllers\PaymentRedirectController;
 
 Route::get('/', function () {
     return view('welcome');
 });
+
+// URL kembali lama dari Xendit (tanpa prefix /api). Transaksi yang dibuat sebelum
+// redirect diarahkan langsung ke frontend masih memakai alamat ini.
+Route::get('/payment/success', [PaymentRedirectController::class, 'success']);
+Route::get('/payment/failed', [PaymentRedirectController::class, 'failed']);
 Route::get('/telescope-login', function () {
     return response()->make('
     <!DOCTYPE html>
