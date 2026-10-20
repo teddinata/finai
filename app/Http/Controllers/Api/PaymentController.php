@@ -222,9 +222,7 @@ class PaymentController extends Controller
             'expires_at' => $expiresAt,
         ]);
 
-        $subscription->household->update([
-            'current_subscription_id' => $subscription->id,
-        ]);
+        $subscription->household->switchToSubscription($subscription);
     }
 
     /**
@@ -347,6 +345,11 @@ class PaymentController extends Controller
                     'cancelled_at' => now()->toIso8601String(),
                 ]),
             ]);
+
+            // Checkout dibatalkan: paket barunya ikut batal, paket sekarang tetap jalan
+            if ($payment->subscription?->status === 'pending') {
+                $payment->subscription->cancel('Payment canceled by user');
+            }
         });
 
         return response()->json([

@@ -586,9 +586,7 @@ class XenditService
             ]);
 
             // Set as current subscription
-            $payment->household->update([
-                'current_subscription_id' => $subscription->id,
-            ]);
+            $payment->household->switchToSubscription($subscription);
 
             Log::info('Subscription activated', [
                 'subscription_id' => $subscription->id,
