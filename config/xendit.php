@@ -57,10 +57,14 @@ return [
     |
     |   XENDIT_ENABLED_METHODS=invoice,virtual_account,ewallet
     |
+    | QRIS sengaja tidak aktif secara default: merchant QRIS di acquirer (DANA)
+    | sedang on hold, QR terbit tapi ditolak saat di-scan. Aktifkan lagi dengan
+    | menambahkan qris ke XENDIT_ENABLED_METHODS setelah Xendit membereskannya.
+    |
     */
 
     'enabled_payment_methods' => array_values(array_filter(array_map(
         'trim',
-        explode(',', (string)env('XENDIT_ENABLED_METHODS', 'invoice,virtual_account,ewallet,qris'))
+        explode(',', (string)env('XENDIT_ENABLED_METHODS', 'invoice,virtual_account,ewallet'))
     ), fn($method) => $method !== '')),
 ];

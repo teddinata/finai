@@ -320,6 +320,18 @@ class PaymentController extends Controller
     }
 
     /**
+     * Metode pembayaran yang sedang aktif (XENDIT_ENABLED_METHODS), supaya halaman
+     * pembayaran menyembunyikan channel yang dimatikan alih-alih gagal saat validasi.
+     */
+    public function methods()
+    {
+        return response()->json([
+            'success' => true,
+            'methods' => config('xendit.enabled_payment_methods'),
+        ]);
+    }
+
+    /**
      * Cancel pending payment
      */
     public function cancel(Request $request, Payment $payment)
